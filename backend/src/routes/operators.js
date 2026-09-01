@@ -307,33 +307,46 @@ router.post('/import-confirm', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Nenhum operador enviado para importação.' });
   }
 
-  const insertStmt = db.prepare(`
-    INSERT INTO operators (name, registration, notes, status)
-    VALUES (?, ?, ?, 'active')
-    ON CONFLICT(registration) DO UPDATE SET
-      name = excluded.name,
-      notes = excluded.notes,
-      updated_at = CURRENT_TIMESTAMP
-  `);
+  try {
+    let importedCount = 0;
 
-  let importedCount = 0;
-  const transaction = db.transaction((ops) => {
-    for (const op of ops) {
+    const findExisting = db.prepare('SELECT id FROM operators WHERE registration = ?');
+    const insertOp = db.prepare(`
+      INSERT INTO operators (name, registration, notes, status)
+      VALUES (?, ?, ?, 'active')
+    `);
+    const updateOp = db.prepare(`
+      UPDATE operators 
+      SET name = ?, notes = ?, status = 'active', updated_at = CURRENT_TIMESTAMP
+      WHERE registration = ?
+    `);
+
+    for (const op of operators) {
       if (op.name && op.registration) {
-        insertStmt.run(op.name.trim(), op.registration.trim(), op.notes || null);
+        const regStr = String(op.registration).trim();
+        const nameStr = String(op.name).trim();
+        const notesStr = op.notes ? String(op.notes).trim() : null;
+
+        const existing = findExisting.get(regStr);
+        if (existing) {
+          updateOp.run(nameStr, notesStr, regStr);
+        } else {
+          insertOp.run(nameStr, regStr, notesStr);
+        }
         importedCount++;
       }
     }
-  });
 
-  transaction(operators);
+    logAudit(req.user.username, 'IMPORT_OPERATORS', 'operators', null, null, `Importados ${importedCount} operadores via Excel/CSV`);
 
-  logAudit(req.user.username, 'IMPORT_OPERATORS', 'operators', null, null, `Importados ${importedCount} operadores via Excel/CSV`);
-
-  return res.json({
-    message: `${importedCount} operadores importados com sucesso!`,
-    importedCount
-  });
+    return res.json({
+      message: `${importedCount} operadores importados com sucesso!`,
+      importedCount
+    });
+  } catch (err) {
+    console.error('Error during operators import-confirm:', err);
+    return res.status(500).json({ error: 'Falha ao salvar operadores no banco de dados.' });
+  }
 });
 
 module.exports = router;

@@ -7,6 +7,9 @@ class PureJSDatabase {
     this.autoIncrement = {};
   }
   pragma() {}
+  transaction(fn) {
+    return (...args) => fn(...args);
+  }
   exec(sql) {
     const statements = sql.split(';').map(s => s.trim()).filter(Boolean);
     for (const stmt of statements) {
