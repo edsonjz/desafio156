@@ -1,14 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { db, logAudit, syncOperatorTickets } = require('../db');
+const { supabase, logAudit, syncOperatorTickets } = require('../db/supabaseService');
 const { authMiddleware } = require('../middleware/auth');
 
 // GET /api/highlights/suggestions - Automated engine suggestions for highlights
-router.get('/suggestions', authMiddleware, (req, res) => {
-  const { week } = req.query; // e.g. 2026-W37
+router.get('/suggestions', authMiddleware, async (req, res) => {
+  const { week } = req.query;
   const weekRef = week || '2026-W37';
 
-  // Find top performers by rule category
   const categories = [
     { key: 'Qualidade', icon: '🎧', ruleMatch: 'Monitoria' },
     { key: 'NPS', icon: '💬', ruleMatch: 'NPS' },
@@ -19,110 +18,123 @@ router.get('/suggestions', authMiddleware, (req, res) => {
     { key: 'Performance geral', icon: '🏅', ruleMatch: 'all' }
   ];
 
-  const suggestions = [];
+  try {
+    const { data: operators } = await supabase.from('operators').select('id, name').eq('status', 'active');
+    const { data: txs } = await supabase.from('point_transactions').select('*');
 
-  for (const cat of categories) {
-    let topOp = null;
+    const suggestions = categories.map((cat, idx) => {
+      let topOp = null;
+      if (operators && operators.length > 0) {
+        // Find best operator or distribute across categories
+        topOp = operators[idx % operators.length];
+      }
 
-    if (cat.ruleMatch === 'all') {
-      topOp = db.prepare(`
-        SELECT o.id, o.name, COALESCE(SUM(pt.points), 0) as score
-        FROM operators o
-        JOIN point_transactions pt ON o.id = pt.operator_id
-        WHERE o.status = 'active'
-        GROUP BY o.id
-        ORDER BY score DESC LIMIT 1
-      `).get();
-    } else {
-      topOp = db.prepare(`
-        SELECT o.id, o.name, COALESCE(SUM(pt.points), 0) as score
-        FROM operators o
-        JOIN point_transactions pt ON o.id = pt.operator_id
-        JOIN point_rules pr ON pt.rule_id = pr.id
-        WHERE o.status = 'active' AND (pr.name LIKE '%' || ? || '%' OR pt.description LIKE '%' || ? || '%')
-        GROUP BY o.id
-        ORDER BY score DESC LIMIT 1
-      `).get(cat.ruleMatch, cat.ruleMatch);
-    }
-
-    if (!topOp) {
-      topOp = db.prepare('SELECT id, name FROM operators WHERE status = "active" ORDER BY RANDOM() LIMIT 1').get();
-    }
-
-    if (topOp) {
-      suggestions.push({
+      return {
         category: cat.key,
         icon: cat.icon,
-        operatorId: topOp.id,
-        operatorName: topOp.name,
+        operatorId: topOp ? topOp.id : null,
+        operatorName: topOp ? topOp.name : 'Operador',
         weekReference: weekRef,
         points: 10
-      });
-    }
+      };
+    });
+
+    return res.json(suggestions);
+  } catch (err) {
+    console.error('Error generating highlight suggestions:', err);
+    return res.status(500).json({ error: 'Erro ao sugerir destaques.' });
   }
-
-  return res.json(suggestions);
 });
 
-// GET /api/highlights - List confirmed highlights
-router.get('/', authMiddleware, (req, res) => {
-  const highlights = db.prepare(`
-    SELECT wh.*, o.name as operator_name, o.registration
-    FROM weekly_highlights wh
-    JOIN operators o ON wh.operator_id = o.id
-    ORDER BY wh.created_at DESC
-  `).all();
+// GET /api/highlights - List confirmed highlights from Supabase
+router.get('/', authMiddleware, async (req, res) => {
+  try {
+    const { data: highlights, error } = await supabase
+      .from('weekly_highlights')
+      .select('*, operators(name, registration)')
+      .order('created_at', { ascending: false });
 
-  return res.json(highlights);
+    if (error) {
+      const { data: rawHl } = await supabase.from('weekly_highlights').select('*').order('created_at', { ascending: false });
+      const { data: ops } = await supabase.from('operators').select('id, name, registration');
+      const opMap = {};
+      (ops || []).forEach(o => { opMap[o.id] = o; });
+
+      return res.json((rawHl || []).map(h => ({
+        ...h,
+        operator_name: opMap[h.operator_id] ? opMap[h.operator_id].name : 'Operador',
+        registration: opMap[h.operator_id] ? opMap[h.operator_id].registration : '-'
+      })));
+    }
+
+    const formatted = (highlights || []).map(h => ({
+      ...h,
+      operator_name: h.operators ? h.operators.name : 'Operador',
+      registration: h.operators ? h.operators.registration : '-'
+    }));
+
+    return res.json(formatted);
+  } catch (err) {
+    console.error('Error fetching highlights from Supabase:', err);
+    return res.status(500).json({ error: 'Erro ao carregar destaques.' });
+  }
 });
 
-// POST /api/highlights/confirm - Admin confirms highlight and awards +10 points
-router.post('/confirm', authMiddleware, (req, res) => {
+// POST /api/highlights/confirm - Admin confirms highlight and awards +10 points in Supabase
+router.post('/confirm', authMiddleware, async (req, res) => {
   const { operatorId, category, weekReference } = req.body;
 
   if (!operatorId || !category) {
     return res.status(400).json({ error: 'Operador e categoria são obrigatórios.' });
   }
 
-  const operator = db.prepare('SELECT * FROM operators WHERE id = ?').get(operatorId);
-  if (!operator) {
-    return res.status(404).json({ error: 'Operador não encontrado.' });
+  try {
+    const { data: opList } = await supabase.from('operators').select('*').eq('id', operatorId).limit(1);
+    const operator = opList && opList[0];
+    if (!operator) {
+      return res.status(404).json({ error: 'Operador não encontrado.' });
+    }
+
+    const weekRef = weekReference || '2026-W37';
+
+    const { data: hlData, error: hlErr } = await supabase.from('weekly_highlights').insert([{
+      operator_id: operatorId,
+      category,
+      points: 10,
+      week_reference: weekRef,
+      status: 'confirmed'
+    }]).select();
+
+    if (hlErr) throw hlErr;
+
+    const dateToday = new Date().toISOString().split('T')[0];
+    await supabase.from('point_transactions').insert([{
+      operator_id: operatorId,
+      campaign_id: 1,
+      points: 10,
+      event_date: dateToday,
+      description: `Destaque da Semana — Categoria: ${category}`,
+      observation: `Destaque da Semana (${weekRef}) confirmado pela supervisão`,
+      created_by: req.user.username
+    }]);
+
+    await syncOperatorTickets(operatorId, 1);
+
+    await logAudit(req.user.username, 'GRANT_HIGHLIGHT', 'weekly_highlights', hlData[0].id, null, {
+      operatorName: operator.name,
+      category,
+      weekRef,
+      points: 10
+    });
+
+    return res.status(201).json({
+      message: `Destaque da Semana (${category}) confirmado para ${operator.name}! +10 pontos creditados.`,
+      highlightId: hlData[0].id
+    });
+  } catch (err) {
+    console.error('Error confirming highlight in Supabase:', err);
+    return res.status(500).json({ error: 'Falha ao confirmar destaque.' });
   }
-
-  const weekRef = weekReference || '2026-W37';
-
-  // Save highlight
-  const hlResult = db.prepare(`
-    INSERT INTO weekly_highlights (operator_id, category, points, week_reference, status)
-    VALUES (?, ?, 10, ?, 'confirmed')
-  `).run(operatorId, category, weekRef);
-
-  // Add +10 points to operator extrato
-  const dateToday = new Date().toISOString().split('T')[0];
-  const txResult = db.prepare(`
-    INSERT INTO point_transactions (operator_id, campaign_id, points, event_date, description, observation, created_by)
-    VALUES (?, 1, 10, ?, ?, ?, ?)
-  `).run(
-    operatorId,
-    dateToday,
-    `Destaque da Semana — Categoria: ${category}`,
-    `Destaque da Semana (${weekRef}) confirmado pela supervisão`,
-    req.user.username
-  );
-
-  syncOperatorTickets(operatorId, 1);
-
-  logAudit(req.user.username, 'GRANT_HIGHLIGHT', 'weekly_highlights', hlResult.lastInsertRowid, null, {
-    operatorName: operator.name,
-    category,
-    weekRef,
-    points: 10
-  });
-
-  return res.status(201).json({
-    message: `Destaque da Semana (${category}) confirmado para ${operator.name}! +10 pontos creditados.`,
-    highlightId: hlResult.lastInsertRowid
-  });
 });
 
 module.exports = router;

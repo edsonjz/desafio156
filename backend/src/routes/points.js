@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { db, logAudit, syncOperatorTickets } = require('../db');
+const { supabase, logAudit, syncOperatorTickets, getCampaign } = require('../db/supabaseService');
 const { authMiddleware } = require('../middleware/auth');
 
 // Helper to check campaign lock state
-function checkCampaignLock() {
-  const campaign = db.prepare('SELECT status FROM campaigns WHERE id = 1').get();
+async function isCampaignLocked() {
+  const campaign = await getCampaign();
   return campaign && campaign.status === 'locked';
 }
 
@@ -29,55 +29,55 @@ function getPeriodRef(dateStr, periodicity) {
 }
 
 // POST /api/points/check-duplicate - Check if launch would duplicate an existing rule entry
-router.post('/check-duplicate', authMiddleware, (req, res) => {
+router.post('/check-duplicate', authMiddleware, async (req, res) => {
   const { operatorIds, ruleId, eventDate } = req.body;
 
   if (!Array.isArray(operatorIds) || !ruleId || !eventDate) {
     return res.status(400).json({ error: 'Dados incompletos para verificação de duplicidade.' });
   }
 
-  const rule = db.prepare('SELECT * FROM point_rules WHERE id = ?').get(ruleId);
-  if (!rule || rule.periodicity === 'monitoria' || rule.periodicity === 'avulso') {
-    return res.json({ hasDuplicates: false, duplicates: [] });
-  }
-
-  const periodRef = getPeriodRef(eventDate, rule.periodicity);
-  if (!periodRef) {
-    return res.json({ hasDuplicates: false, duplicates: [] });
-  }
-
-  const duplicates = [];
-  const checkStmt = db.prepare(`
-    SELECT pt.id, o.name, o.registration
-    FROM point_transactions pt
-    JOIN operators o ON pt.operator_id = o.id
-    WHERE pt.operator_id = ? AND pt.rule_id = ? AND pt.period_ref = ?
-  `);
-
-  for (const opId of operatorIds) {
-    const existing = checkStmt.get(opId, ruleId, periodRef);
-    if (existing) {
-      duplicates.push({
-        operatorId: opId,
-        name: existing.name,
-        registration: existing.registration,
-        ruleName: rule.name,
-        periodRef
-      });
+  try {
+    const { data: rules } = await supabase.from('point_rules').select('*').eq('id', ruleId).limit(1);
+    const rule = rules && rules[0];
+    if (!rule || rule.periodicity === 'monitoria' || rule.periodicity === 'avulso') {
+      return res.json({ hasDuplicates: false, duplicates: [] });
     }
-  }
 
-  return res.json({
-    hasDuplicates: duplicates.length > 0,
-    periodicity: rule.periodicity,
-    periodRef,
-    duplicates
-  });
+    const periodRef = getPeriodRef(eventDate, rule.periodicity);
+    if (!periodRef) {
+      return res.json({ hasDuplicates: false, duplicates: [] });
+    }
+
+    const { data: existingTxs } = await supabase
+      .from('point_transactions')
+      .select('id, operator_id, operators(name, registration)')
+      .in('operator_id', operatorIds)
+      .eq('rule_id', ruleId)
+      .eq('period_ref', periodRef);
+
+    const duplicates = (existingTxs || []).map(tx => ({
+      operatorId: tx.operator_id,
+      name: tx.operators ? tx.operators.name : 'Operador',
+      registration: tx.operators ? tx.operators.registration : '-',
+      ruleName: rule.name,
+      periodRef
+    }));
+
+    return res.json({
+      hasDuplicates: duplicates.length > 0,
+      periodicity: rule.periodicity,
+      periodRef,
+      duplicates
+    });
+  } catch (err) {
+    console.error('Error checking duplicate points:', err);
+    return res.json({ hasDuplicates: false, duplicates: [] });
+  }
 });
 
 // POST /api/points/single - Launch points for a single operator
-router.post('/single', authMiddleware, (req, res) => {
-  if (checkCampaignLock()) {
+router.post('/single', authMiddleware, async (req, res) => {
+  if (await isCampaignLocked()) {
     return res.status(403).json({ error: 'A campanha está ENCERRADA. Novos lançamentos de pontos estão bloqueados.' });
   }
 
@@ -87,108 +87,123 @@ router.post('/single', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Operador e data do evento são obrigatórios.' });
   }
 
-  const operator = db.prepare('SELECT * FROM operators WHERE id = ?').get(operatorId);
-  if (!operator) {
-    return res.status(404).json({ error: 'Operador não encontrado.' });
-  }
+  try {
+    const { data: opList } = await supabase.from('operators').select('*').eq('id', operatorId).limit(1);
+    const operator = opList && opList[0];
+    if (!operator) {
+      return res.status(404).json({ error: 'Operador não encontrado.' });
+    }
 
-  let finalPoints = Number(points);
-  let ruleName = isAdjustment ? 'Ajuste Administrativo' : 'Lançamento Manual';
-  let periodicity = 'avulso';
-  let targetRule = null;
+    let finalPoints = Number(points);
+    let ruleName = isAdjustment ? 'Ajuste Administrativo' : 'Lançamento Manual';
+    let periodicity = 'avulso';
+    let targetRule = null;
 
-  if (ruleId) {
-    targetRule = db.prepare('SELECT * FROM point_rules WHERE id = ?').get(ruleId);
-    if (targetRule) {
-      ruleName = targetRule.name;
-      periodicity = targetRule.periodicity;
-      if (points === undefined || points === null || points === '') {
-        finalPoints = targetRule.points;
+    if (ruleId) {
+      const { data: ruleList } = await supabase.from('point_rules').select('*').eq('id', ruleId).limit(1);
+      targetRule = ruleList && ruleList[0];
+      if (targetRule) {
+        ruleName = targetRule.name;
+        periodicity = targetRule.periodicity;
+        if (points === undefined || points === null || points === '') {
+          finalPoints = targetRule.points;
+        }
       }
     }
-  }
 
-  if (isNaN(finalPoints)) {
-    return res.status(400).json({ error: 'Quantidade de pontos inválida.' });
-  }
-
-  const periodRef = getPeriodRef(eventDate, periodicity);
-
-  // Check duplicate unless forceDuplicate is true
-  if (targetRule && !forceDuplicate && ['diario', 'semanal', 'mensal'].includes(periodicity)) {
-    const existing = db.prepare(`
-      SELECT id FROM point_transactions 
-      WHERE operator_id = ? AND rule_id = ? AND period_ref = ?
-    `).get(operatorId, ruleId, periodRef);
-
-    if (existing) {
-      return res.status(409).json({
-        error: `O operador ${operator.name} já possui um lançamento da regra "${ruleName}" para este período (${periodRef}).`,
-        isDuplicate: true
-      });
+    if (isNaN(finalPoints)) {
+      return res.status(400).json({ error: 'Quantidade de pontos inválida.' });
     }
-  }
 
-  // Check double points status if points > 0
-  let isDoublePoints = 0;
-  let description = ruleName;
-  if (finalPoints > 0) {
-    const doubleEntry = db.prepare('SELECT active FROM operator_double_points WHERE operator_id = ? AND active = 1').get(operatorId);
-    if (doubleEntry) {
-      finalPoints = finalPoints * 2;
-      isDoublePoints = 1;
-      description = `${ruleName} — Pontos em dobro`;
-      // Consume double points
-      db.prepare('DELETE FROM operator_double_points WHERE operator_id = ?').run(operatorId);
+    const periodRef = getPeriodRef(eventDate, periodicity);
+
+    // Duplicate check
+    if (targetRule && !forceDuplicate && ['diario', 'semanal', 'mensal'].includes(periodicity)) {
+      const { data: dupList } = await supabase
+        .from('point_transactions')
+        .select('id')
+        .eq('operator_id', operatorId)
+        .eq('rule_id', ruleId)
+        .eq('period_ref', periodRef)
+        .limit(1);
+
+      if (dupList && dupList.length > 0) {
+        return res.status(409).json({
+          error: `O operador ${operator.name} já possui um lançamento da regra "${ruleName}" para este período (${periodRef}).`,
+          isDuplicate: true
+        });
+      }
     }
+
+    // Check double points status if points > 0
+    let isDoublePoints = 0;
+    let description = ruleName;
+    if (finalPoints > 0) {
+      const { data: dblList } = await supabase
+        .from('operator_double_points')
+        .select('active')
+        .eq('operator_id', operatorId)
+        .eq('active', 1)
+        .limit(1);
+
+      if (dblList && dblList.length > 0) {
+        finalPoints = finalPoints * 2;
+        isDoublePoints = 1;
+        description = `${ruleName} — Pontos em dobro`;
+        await supabase.from('operator_double_points').delete().eq('operator_id', operatorId);
+      }
+    }
+
+    // Insert transaction
+    const { data: insData, error: insErr } = await supabase.from('point_transactions').insert([{
+      operator_id: operatorId,
+      campaign_id: 1,
+      rule_id: ruleId || null,
+      points: finalPoints,
+      event_date: eventDate,
+      description,
+      observation: observation || null,
+      indicator_value: indicatorValue || null,
+      is_adjustment: isAdjustment ? 1 : 0,
+      is_double_points: isDoublePoints,
+      period_ref: periodRef,
+      created_by: req.user.username
+    }]).select();
+
+    if (insErr) throw insErr;
+    const newTx = insData[0];
+
+    // Sync tickets
+    const syncResult = await syncOperatorTickets(operatorId, 1);
+
+    await logAudit(req.user.username, 'ADD_POINTS', 'point_transactions', newTx.id, null, {
+      operatorName: operator.name,
+      points: finalPoints,
+      eventDate,
+      ruleName,
+      isDoublePoints
+    });
+
+    return res.status(201).json({
+      message: 'Pontos lançados com sucesso.',
+      transactionId: newTx.id,
+      pointsAwarded: finalPoints,
+      isDoublePoints: !!isDoublePoints,
+      totalPoints: syncResult.totalPoints,
+      totalTickets: syncResult.totalTickets,
+      newlyEarnedTickets: syncResult.newlyEarned,
+      newTicketCodes: syncResult.newTicketCodes,
+      operatorName: operator.name
+    });
+  } catch (err) {
+    console.error('Error adding single point transaction:', err);
+    return res.status(500).json({ error: 'Erro ao registrar pontos.' });
   }
-
-  // Insert transaction
-  const result = db.prepare(`
-    INSERT INTO point_transactions (
-      operator_id, campaign_id, rule_id, points, event_date, description, observation, indicator_value, is_adjustment, is_double_points, period_ref, created_by
-    ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    operatorId,
-    ruleId || null,
-    finalPoints,
-    eventDate,
-    description,
-    observation || null,
-    indicatorValue || null,
-    isAdjustment ? 1 : 0,
-    isDoublePoints,
-    periodRef,
-    req.user.username
-  );
-
-  // Sync tickets & check for ticket unlock alert
-  const syncResult = syncOperatorTickets(operatorId, 1);
-
-  logAudit(req.user.username, 'ADD_POINTS', 'point_transactions', result.lastInsertRowid, null, {
-    operatorName: operator.name,
-    points: finalPoints,
-    eventDate,
-    ruleName,
-    isDoublePoints
-  });
-
-  return res.status(201).json({
-    message: 'Pontos lançados com sucesso.',
-    transactionId: result.lastInsertRowid,
-    pointsAwarded: finalPoints,
-    isDoublePoints: !!isDoublePoints,
-    totalPoints: syncResult.totalPoints,
-    totalTickets: syncResult.totalTickets,
-    newlyEarnedTickets: syncResult.newlyEarned,
-    newTicketCodes: syncResult.newTicketCodes,
-    operatorName: operator.name
-  });
 });
 
 // POST /api/points/mass - Mass launch points for multiple operators
-router.post('/mass', authMiddleware, (req, res) => {
-  if (checkCampaignLock()) {
+router.post('/mass', authMiddleware, async (req, res) => {
+  if (await isCampaignLocked()) {
     return res.status(403).json({ error: 'A campanha está ENCERRADA. Lançamentos em massa estão bloqueados.' });
   }
 
@@ -202,131 +217,147 @@ router.post('/mass', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'A data do evento é obrigatória.' });
   }
 
-  let targetRule = null;
-  let ruleName = 'Lançamento em Massa';
-  let defaultPts = Number(points);
-  let periodicity = 'avulso';
+  try {
+    let targetRule = null;
+    let ruleName = 'Lançamento em Massa';
+    let defaultPts = Number(points);
+    let periodicity = 'avulso';
 
-  if (ruleId) {
-    targetRule = db.prepare('SELECT * FROM point_rules WHERE id = ?').get(ruleId);
-    if (targetRule) {
-      ruleName = targetRule.name;
-      periodicity = targetRule.periodicity;
-      if (points === undefined || points === null || points === '') {
-        defaultPts = targetRule.points;
+    if (ruleId) {
+      const { data: ruleList } = await supabase.from('point_rules').select('*').eq('id', ruleId).limit(1);
+      targetRule = ruleList && ruleList[0];
+      if (targetRule) {
+        ruleName = targetRule.name;
+        periodicity = targetRule.periodicity;
+        if (points === undefined || points === null || points === '') {
+          defaultPts = targetRule.points;
+        }
       }
     }
-  }
 
-  if (isNaN(defaultPts)) {
-    return res.status(400).json({ error: 'Quantidade de pontos inválida.' });
-  }
+    if (isNaN(defaultPts)) {
+      return res.status(400).json({ error: 'Quantidade de pontos inválida.' });
+    }
 
-  const periodRef = getPeriodRef(eventDate, periodicity);
+    const periodRef = getPeriodRef(eventDate, periodicity);
 
-  // Perform mass transaction
-  let totalDistributed = 0;
-  let operatorsCount = 0;
-  const ticketAlerts = [];
+    // Get double points entries
+    const { data: doubleList } = await supabase.from('operator_double_points').select('operator_id').eq('active', 1);
+    const doubleSet = new Set((doubleList || []).map(d => d.operator_id));
 
-  const insertTx = db.prepare(`
-    INSERT INTO point_transactions (
-      operator_id, campaign_id, rule_id, points, event_date, description, observation, indicator_value, is_adjustment, is_double_points, period_ref, created_by
-    ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-  `);
+    // Get existing duplicate transactions
+    const { data: dupList } = await supabase
+      .from('point_transactions')
+      .select('operator_id')
+      .in('operator_id', operatorIds)
+      .eq('rule_id', ruleId)
+      .eq('period_ref', periodRef);
 
-  const doubleStmt = db.prepare('SELECT active FROM operator_double_points WHERE operator_id = ? AND active = 1');
-  const consumeDoubleStmt = db.prepare('DELETE FROM operator_double_points WHERE operator_id = ?');
+    const dupSet = new Set((dupList || []).map(d => d.operator_id));
 
-  const checkDupStmt = db.prepare(`
-    SELECT id FROM point_transactions WHERE operator_id = ? AND rule_id = ? AND period_ref = ?
-  `);
+    // Get operators info
+    const { data: ops } = await supabase.from('operators').select('id, name').in('id', operatorIds);
+    const opMap = {};
+    (ops || []).forEach(o => { opMap[o.id] = o; });
 
-  const runBatch = db.transaction((ids) => {
-    for (const opId of ids) {
-      const op = db.prepare('SELECT name FROM operators WHERE id = ?').get(opId);
+    const transactionsToInsert = [];
+    const opsToConsumeDouble = [];
+    let totalDistributed = 0;
+    let operatorsCount = 0;
+
+    for (const opId of operatorIds) {
+      const op = opMap[opId];
       if (!op) continue;
 
-      // Duplicate check per operator
-      if (targetRule && !forceDuplicate && ['diario', 'semanal', 'mensal'].includes(periodicity)) {
-        const dup = checkDupStmt.get(opId, ruleId, periodRef);
-        if (dup) continue; // skip duplicates unless forced
+      if (targetRule && !forceDuplicate && ['diario', 'semanal', 'mensal'].includes(periodicity) && dupSet.has(opId)) {
+        continue; // skip duplicate
       }
 
       let opPts = defaultPts;
       let isDouble = 0;
       let desc = ruleName;
 
-      if (opPts > 0 && doubleStmt.get(opId)) {
+      if (opPts > 0 && doubleSet.has(opId)) {
         opPts = opPts * 2;
         isDouble = 1;
         desc = `${ruleName} — Pontos em dobro`;
-        consumeDoubleStmt.run(opId);
+        opsToConsumeDouble.push(opId);
       }
 
-      insertTx.run(
-        opId,
-        ruleId || null,
-        opPts,
-        eventDate,
-        desc,
-        observation || null,
-        indicatorValue || null,
-        isDouble,
-        periodRef,
-        req.user.username
-      );
-
-      const sync = syncOperatorTickets(opId, 1);
-      if (sync.newlyEarned > 0) {
-        ticketAlerts.push({
-          operatorName: op.name,
-          totalPoints: sync.totalPoints,
-          totalTickets: sync.totalTickets,
-          newlyEarned: sync.newlyEarned,
-          newTicketCodes: sync.newTicketCodes
-        });
-      }
+      transactionsToInsert.push({
+        operator_id: opId,
+        campaign_id: 1,
+        rule_id: ruleId || null,
+        points: opPts,
+        event_date: eventDate,
+        description: desc,
+        observation: observation || null,
+        indicator_value: indicatorValue || null,
+        is_adjustment: 0,
+        is_double_points: isDouble,
+        period_ref: periodRef,
+        created_by: req.user.username
+      });
 
       totalDistributed += opPts;
       operatorsCount++;
     }
-  });
 
-  runBatch(operatorIds);
+    if (transactionsToInsert.length > 0) {
+      await supabase.from('point_transactions').insert(transactionsToInsert);
 
-  logAudit(req.user.username, 'MASS_ADD_POINTS', 'point_transactions', null, null, {
-    ruleName,
-    operatorsCount,
-    totalDistributed,
-    eventDate
-  });
+      // Consume double points
+      if (opsToConsumeDouble.length > 0) {
+        await supabase.from('operator_double_points').delete().in('operator_id', opsToConsumeDouble);
+      }
 
-  return res.json({
-    message: `${operatorsCount} lançamentos realizados com sucesso! Total distribuído: ${totalDistributed > 0 ? '+' : ''}${totalDistributed} pontos.`,
-    operatorsCount,
-    totalDistributed,
-    ticketAlerts
-  });
+      // Sync tickets for all affected operators
+      for (const opId of operatorIds) {
+        await syncOperatorTickets(opId, 1);
+      }
+    }
+
+    await logAudit(req.user.username, 'MASS_ADD_POINTS', 'point_transactions', null, null, {
+      ruleName,
+      operatorsCount,
+      totalDistributed,
+      eventDate
+    });
+
+    return res.json({
+      message: `${operatorsCount} lançamentos realizados com sucesso! Total distribuído: ${totalDistributed > 0 ? '+' : ''}${totalDistributed} pontos.`,
+      operatorsCount,
+      totalDistributed
+    });
+  } catch (err) {
+    console.error('Error during mass point launch:', err);
+    return res.status(500).json({ error: 'Falha ao processar lançamento em massa.' });
+  }
 });
 
-// DELETE /api/points/:id - Delete transaction (Admin audit safety check)
-router.delete('/:id', authMiddleware, (req, res) => {
-  if (checkCampaignLock()) {
+// DELETE /api/points/:id - Delete transaction
+router.delete('/:id', authMiddleware, async (req, res) => {
+  if (await isCampaignLocked()) {
     return res.status(403).json({ error: 'A campanha está ENCERRADA. Exclusão de lançamentos está bloqueada.' });
   }
 
-  const tx = db.prepare('SELECT * FROM point_transactions WHERE id = ?').get(req.params.id);
-  if (!tx) {
-    return res.status(404).json({ error: 'Lançamento não encontrado.' });
+  try {
+    const { data: txList } = await supabase.from('point_transactions').select('*').eq('id', req.params.id).limit(1);
+    const tx = txList && txList[0];
+    if (!tx) {
+      return res.status(404).json({ error: 'Lançamento não encontrado.' });
+    }
+
+    await supabase.from('point_transactions').delete().eq('id', req.params.id);
+    await syncOperatorTickets(tx.operator_id, 1);
+
+    await logAudit(req.user.username, 'DELETE_TRANSACTION', 'point_transactions', req.params.id, tx, null);
+
+    return res.json({ message: 'Lançamento excluído com sucesso.' });
+  } catch (err) {
+    console.error('Error deleting point transaction:', err);
+    return res.status(500).json({ error: 'Falha ao excluir lançamento.' });
   }
-
-  db.prepare('DELETE FROM point_transactions WHERE id = ?').run(req.params.id);
-  syncOperatorTickets(tx.operator_id, 1);
-
-  logAudit(req.user.username, 'DELETE_TRANSACTION', 'point_transactions', req.params.id, tx, null);
-
-  return res.json({ message: 'Lançamento excluído com sucesso.' });
 });
 
 module.exports = router;

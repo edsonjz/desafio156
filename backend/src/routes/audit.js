@@ -1,39 +1,33 @@
 const express = require('express');
 const router = express.Router();
-const { db } = require('../db');
+const { supabase } = require('../db/supabaseService');
 const { authMiddleware } = require('../middleware/auth');
 
-// GET /api/audit - List audit logs with filters
-router.get('/', authMiddleware, (req, res) => {
+// GET /api/audit - List audit logs with filters from Supabase
+router.get('/', authMiddleware, async (req, res) => {
   const { action, entity, user } = req.query;
 
-  let query = 'SELECT * FROM audit_logs';
-  const where = [];
-  const params = [];
+  try {
+    let query = supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(500);
 
-  if (action) {
-    where.push('action = ?');
-    params.push(action);
+    if (action) {
+      query = query.eq('action', action);
+    }
+    if (entity) {
+      query = query.eq('entity', entity);
+    }
+    if (user) {
+      query = query.ilike('user_id', `%${user}%`);
+    }
+
+    const { data: logs, error } = await query;
+    if (error) throw error;
+
+    return res.json(logs || []);
+  } catch (err) {
+    console.error('Error fetching audit logs from Supabase:', err);
+    return res.status(500).json({ error: 'Erro ao carregar logs de auditoria.' });
   }
-
-  if (entity) {
-    where.push('entity = ?');
-    params.push(entity);
-  }
-
-  if (user) {
-    where.push('user_id LIKE ?');
-    params.push(`%${user}%`);
-  }
-
-  if (where.length > 0) {
-    query += ' WHERE ' + where.join(' AND ');
-  }
-
-  query += ' ORDER BY created_at DESC LIMIT 500';
-
-  const logs = db.prepare(query).all(...params);
-  return res.json(logs);
 });
 
 module.exports = router;
