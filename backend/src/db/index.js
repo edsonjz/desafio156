@@ -2,17 +2,31 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
-const dbDir = path.join(__dirname, '../../data');
+const dbDir = process.env.VERCEL ? '/tmp' : path.join(__dirname, '../../data');
 if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+  try {
+    fs.mkdirSync(dbDir, { recursive: true });
+  } catch (e) {
+    console.warn('Could not create db directory:', e);
+  }
 }
 
-const dbPath = path.join(dbDir, 'desafio156.db');
-const db = new Database(dbPath);
+const dbPath = process.env.VERCEL ? '/tmp/desafio156.db' : path.join(dbDir, 'desafio156.db');
+let db;
+try {
+  db = new Database(dbPath);
+} catch (err) {
+  console.error('Failed to open database at', dbPath, err);
+  db = new Database(':memory:');
+}
 
 // Enable foreign keys & WAL mode for fast concurrency
-db.pragma('foreign_keys = ON');
-db.pragma('journal_mode = WAL');
+try {
+  db.pragma('foreign_keys = ON');
+  db.pragma('journal_mode = WAL');
+} catch (err) {
+  console.warn('Pragma setup warning:', err);
+}
 
 function initDb() {
   db.exec(`

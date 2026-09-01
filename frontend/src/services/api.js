@@ -35,7 +35,15 @@ export async function apiFetch(endpoint, options = {}) {
 
   try {
     const res = await fetch(`${API_BASE}${endpoint}`, config);
-    const data = await res.json();
+    
+    let data;
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      data = await res.json();
+    } else {
+      const text = await res.text();
+      throw new Error(`Erro na API (${res.status}): A rota não retornou um JSON válido.`);
+    }
 
     if (!res.ok) {
       if (res.status === 401) {
@@ -65,7 +73,15 @@ export async function apiUpload(endpoint, formData) {
       headers,
       body: formData
     });
-    const data = await res.json();
+
+    let data;
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      data = await res.json();
+    } else {
+      const text = await res.text();
+      throw new Error(`Erro na API (${res.status}): A rota não retornou um JSON válido.`);
+    }
 
     if (!res.ok) {
       throw new Error(data.error || `Erro HTTP ${res.status}`);
