@@ -1,31 +1,224 @@
-const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
-const dbDir = process.env.VERCEL ? '/tmp' : path.join(__dirname, '../../data');
-if (!fs.existsSync(dbDir)) {
-  try {
-    fs.mkdirSync(dbDir, { recursive: true });
-  } catch (e) {
-    console.warn('Could not create db directory:', e);
+class PureJSDatabase {
+  constructor() {
+    this.tables = {};
+    this.autoIncrement = {};
+  }
+  pragma() {}
+  exec(sql) {
+    const statements = sql.split(';').map(s => s.trim()).filter(Boolean);
+    for (const stmt of statements) {
+      if (stmt.toUpperCase().startsWith('CREATE TABLE')) {
+        const match = stmt.match(/CREATE TABLE IF NOT EXISTS ([\w]+)/i) || stmt.match(/CREATE TABLE ([\w]+)/i);
+        if (match) {
+          const tableName = match[1];
+          if (!this.tables[tableName]) {
+            this.tables[tableName] = [];
+            this.autoIncrement[tableName] = 1;
+          }
+        }
+      }
+    }
+  }
+  prepare(sqlStr) {
+    const self = this;
+    const cleanSql = sqlStr.replace(/\s+/g, ' ').trim();
+    return {
+      get(...params) {
+        const flatParams = params.flat();
+        const results = self._executeSelect(cleanSql, flatParams);
+        return results[0] || undefined;
+      },
+      all(...params) {
+        const flatParams = params.flat();
+        return self._executeSelect(cleanSql, flatParams);
+      },
+      run(...params) {
+        const flatParams = params.flat();
+        return self._executeUpdate(cleanSql, flatParams);
+      }
+    };
+  }
+  _executeSelect(sql, params) {
+    const countMatch = sql.match(/SELECT COUNT\(\*\) as count FROM ([\w]+)/i);
+    if (countMatch) {
+      const tableName = countMatch[1];
+      const whereMatch = sql.match(/WHERE\s+(.+)/i);
+      let rows = this.tables[tableName] || [];
+      if (whereMatch) {
+        rows = this._filterRows(rows, whereMatch[1], params);
+      }
+      return [{ count: rows.length }];
+    }
+
+    if (sql.includes('SUM(points)') && sql.includes('point_transactions')) {
+      let rows = this.tables['point_transactions'] || [];
+      const whereMatch = sql.match(/WHERE\s+(.+)/i);
+      if (whereMatch) {
+        rows = this._filterRows(rows, whereMatch[1], params);
+      }
+      const sum = rows.reduce((acc, r) => acc + (Number(r.points) || 0), 0);
+      return [{ totalPoints: sum }];
+    }
+
+    if (sql.includes('MAX(ticket_number)') && sql.includes('tickets')) {
+      let rows = this.tables['tickets'] || [];
+      const whereMatch = sql.match(/WHERE\s+(.+)/i);
+      if (whereMatch) {
+        rows = this._filterRows(rows, whereMatch[1], params);
+      }
+      const max = rows.reduce((acc, r) => Math.max(acc, Number(r.ticket_number) || 0), 0);
+      return [{ maxNum: max }];
+    }
+
+    const selectMatch = sql.match(/SELECT .*? FROM ([\w]+)(?:\s+(?:WHERE|ORDER BY|LIMIT).*)?/i);
+    if (selectMatch) {
+      const tableName = selectMatch[1];
+      let rows = [...(this.tables[tableName] || [])];
+
+      const whereMatch = sql.match(/WHERE\s+(.*?)(?:ORDER BY|LIMIT|$)/i);
+      if (whereMatch) {
+        rows = this._filterRows(rows, whereMatch[1].trim(), params);
+      }
+
+      const orderMatch = sql.match(/ORDER BY\s+(.*?)(?:LIMIT|$)/i);
+      if (orderMatch) {
+        const orderPart = orderMatch[1].trim();
+        const isDesc = orderPart.toUpperCase().endsWith('DESC');
+        const col = orderPart.split(' ')[0].trim();
+        rows.sort((a, b) => {
+          if (a[col] < b[col]) return isDesc ? 1 : -1;
+          if (a[col] > b[col]) return isDesc ? -1 : 1;
+          return 0;
+        });
+      }
+
+      const limitMatch = sql.match(/LIMIT\s+(\d+)/i);
+      if (limitMatch) {
+        rows = rows.slice(0, parseInt(limitMatch[1], 10));
+      }
+
+      return rows;
+    }
+
+    return [];
+  }
+  _executeUpdate(sql, params) {
+    const insertMatch = sql.match(/INSERT INTO ([\w]+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
+    if (insertMatch) {
+      const tableName = insertMatch[1];
+      const cols = insertMatch[2].split(',').map(c => c.trim());
+      if (!this.tables[tableName]) {
+        this.tables[tableName] = [];
+        this.autoIncrement[tableName] = 1;
+      }
+      const row = { id: this.autoIncrement[tableName]++ };
+      let pIdx = 0;
+      const valsStr = insertMatch[3].split(',').map(v => v.trim());
+      cols.forEach((col, idx) => {
+        const v = valsStr[idx];
+        if (v === '?') {
+          row[col] = params[pIdx++];
+        } else {
+          row[col] = v.replace(/^['"]|['"]$/g, '');
+        }
+      });
+      this.tables[tableName].push(row);
+      return { lastInsertRowid: row.id, changes: 1 };
+    }
+
+    const updateMatch = sql.match(/UPDATE ([\w]+)\s+SET\s+(.+?)\s+WHERE\s+(.+)/i);
+    if (updateMatch) {
+      const tableName = updateMatch[1];
+      const setClause = updateMatch[2];
+      const whereClause = updateMatch[3];
+
+      let rows = this.tables[tableName] || [];
+      const setPairs = setClause.split(',').map(s => s.trim());
+      const numSetParams = (setClause.match(/\?/g) || []).length;
+      const setParams = params.slice(0, numSetParams);
+      const whereParams = params.slice(numSetParams);
+
+      const matchingRows = this._filterRows(rows, whereClause, whereParams);
+      matchingRows.forEach(row => {
+        let pIdx = 0;
+        setPairs.forEach(pair => {
+          const col = pair.split('=')[0].trim();
+          if (pair.includes('?')) {
+            row[col] = setParams[pIdx++];
+          } else if (pair.toUpperCase().includes('CURRENT_TIMESTAMP')) {
+            row[col] = new Date().toISOString();
+          }
+        });
+      });
+      return { changes: matchingRows.length };
+    }
+
+    const deleteMatch = sql.match(/DELETE FROM ([\w]+)(?:\s+WHERE\s+(.+))?/i);
+    if (deleteMatch) {
+      const tableName = deleteMatch[1];
+      const whereClause = deleteMatch[2];
+      if (!whereClause) {
+        const count = (this.tables[tableName] || []).length;
+        this.tables[tableName] = [];
+        return { changes: count };
+      }
+      const initialCount = (this.tables[tableName] || []).length;
+      const matchingRows = this._filterRows(this.tables[tableName] || [], whereClause, params);
+      this.tables[tableName] = (this.tables[tableName] || []).filter(r => !matchingRows.includes(r));
+      return { changes: initialCount - this.tables[tableName].length };
+    }
+
+    return { changes: 0 };
+  }
+  _filterRows(rows, whereClause, params) {
+    if (!whereClause) return rows;
+    let paramIdx = 0;
+    return rows.filter(row => {
+      const conditions = whereClause.split(/\s+AND\s+/i);
+      let matchAll = true;
+      for (const cond of conditions) {
+        const parts = cond.trim().split(/\s*=\s*/);
+        if (parts.length === 2) {
+          const col = parts[0].trim();
+          const valExpr = parts[1].trim();
+          let expectedVal;
+          if (valExpr === '?') {
+            expectedVal = params[paramIdx++];
+          } else {
+            expectedVal = valExpr.replace(/^['"]|['"]$/g, '');
+          }
+          if (String(row[col]) !== String(expectedVal)) {
+            matchAll = false;
+            break;
+          }
+        }
+      }
+      return matchAll;
+    });
   }
 }
 
-const dbPath = process.env.VERCEL ? '/tmp/desafio156.db' : path.join(dbDir, 'desafio156.db');
 let db;
 try {
+  const Database = require('better-sqlite3');
+  const dbDir = process.env.VERCEL ? '/tmp' : path.join(__dirname, '../../data');
+  if (!fs.existsSync(dbDir)) {
+    try {
+      fs.mkdirSync(dbDir, { recursive: true });
+    } catch (e) {
+      console.warn('Could not create db directory:', e);
+    }
+  }
+  const dbPath = process.env.VERCEL ? '/tmp/desafio156.db' : path.join(dbDir, 'desafio156.db');
   db = new Database(dbPath);
-} catch (err) {
-  console.error('Failed to open database at', dbPath, err);
-  db = new Database(':memory:');
-}
-
-// Enable foreign keys & WAL mode for fast concurrency
-try {
   db.pragma('foreign_keys = ON');
   db.pragma('journal_mode = WAL');
 } catch (err) {
-  console.warn('Pragma setup warning:', err);
+  console.warn('better-sqlite3 native module not available, using in-memory pure JS fallback for Vercel:', err.message);
+  db = new PureJSDatabase();
 }
 
 function initDb() {
@@ -42,7 +235,7 @@ function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       registration TEXT UNIQUE NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active', -- active, inactive
+      status TEXT NOT NULL DEFAULT 'active',
       notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -52,9 +245,9 @@ function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       subtitle TEXT NOT NULL,
-      start_date TEXT NOT NULL, -- YYYY-MM-DD
-      end_date TEXT NOT NULL,   -- YYYY-MM-DD
-      status TEXT NOT NULL DEFAULT 'active', -- active, locked
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
       locked_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -64,8 +257,8 @@ function initDb() {
       name TEXT NOT NULL,
       description TEXT,
       points INTEGER NOT NULL,
-      periodicity TEXT NOT NULL, -- diario, semanal, mensal, monitoria, avulso
-      type TEXT NOT NULL, -- positive, negative
+      periodicity TEXT NOT NULL,
+      type TEXT NOT NULL,
       active INTEGER NOT NULL DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -83,7 +276,7 @@ function initDb() {
       indicator_value TEXT,
       is_adjustment INTEGER DEFAULT 0,
       is_double_points INTEGER DEFAULT 0,
-      period_ref TEXT, -- e.g. 2026-09-02, 2026-W37, 2026-09
+      period_ref TEXT,
       created_by TEXT NOT NULL DEFAULT 'Admin',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (operator_id) REFERENCES operators(id),
@@ -96,7 +289,7 @@ function initDb() {
       operator_id INTEGER NOT NULL,
       campaign_id INTEGER NOT NULL,
       ticket_number INTEGER NOT NULL,
-      ticket_code TEXT NOT NULL, -- e.g. TKT-0047
+      ticket_code TEXT NOT NULL,
       generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       status TEXT NOT NULL DEFAULT 'valid',
       FOREIGN KEY (operator_id) REFERENCES operators(id),
@@ -107,7 +300,7 @@ function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       operator_id INTEGER NOT NULL,
       prize TEXT NOT NULL,
-      prize_type TEXT NOT NULL, -- points, double_points, ticket, extra_break, early_leave, surprise, special_challenge, nothing
+      prize_type TEXT NOT NULL,
       points INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       created_by TEXT NOT NULL DEFAULT 'Admin',
@@ -126,7 +319,7 @@ function initDb() {
       operator_id INTEGER NOT NULL,
       name TEXT NOT NULL,
       category TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'Pendente', -- Pendente, Utilizado, Cancelado
+      status TEXT NOT NULL DEFAULT 'Pendente',
       awarded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       used_at DATETIME,
       observation TEXT,
@@ -139,7 +332,7 @@ function initDb() {
       operator_id INTEGER NOT NULL,
       category TEXT NOT NULL,
       points INTEGER NOT NULL DEFAULT 10,
-      week_reference TEXT NOT NULL, -- e.g. 2026-W37
+      week_reference TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'confirmed',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (operator_id) REFERENCES operators(id)
@@ -152,7 +345,7 @@ function initDb() {
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL,
       reward_points INTEGER NOT NULL,
-      status TEXT NOT NULL DEFAULT 'ativo', -- ativo, encerrado, concluido, cancelado
+      status TEXT NOT NULL DEFAULT 'ativo',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -199,9 +392,7 @@ function logAudit(userId, action, entity, entityId = null, oldValue = null, newV
   }
 }
 
-// Function to calculate accumulated points and manage automatic tickets
 function syncOperatorTickets(operatorId, campaignId = 1) {
-  // Get total points
   const pointsRow = db.prepare(`
     SELECT COALESCE(SUM(points), 0) as totalPoints
     FROM point_transactions
@@ -209,19 +400,15 @@ function syncOperatorTickets(operatorId, campaignId = 1) {
   `).get(operatorId, campaignId);
 
   const totalPoints = pointsRow ? pointsRow.totalPoints : 0;
-  
-  // Tickets formula: floor(totalPoints / 50) if totalPoints >= 0, else 0
   const totalTicketsEarned = totalPoints > 0 ? Math.floor(totalPoints / 50) : 0;
 
-  // Count existing tickets for this operator
-  const existingTickets = db.prepare(`
+  const existingRow = db.prepare(`
     SELECT COUNT(*) as count FROM tickets WHERE operator_id = ? AND campaign_id = ?
-  `).get(operatorId, campaignId).count;
+  `).get(operatorId, campaignId);
+  const existingTickets = existingRow ? existingRow.count : 0;
 
   if (totalTicketsEarned > existingTickets) {
     const needed = totalTicketsEarned - existingTickets;
-    
-    // Find next ticket number global for campaign
     const maxNumRow = db.prepare(`
       SELECT COALESCE(MAX(ticket_number), 0) as maxNum FROM tickets WHERE campaign_id = ?
     `).get(campaignId);
