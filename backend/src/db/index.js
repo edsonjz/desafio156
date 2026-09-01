@@ -183,24 +183,54 @@ class PureJSDatabase {
       const conditions = whereClause.split(/\s+AND\s+/i);
       let matchAll = true;
       for (const cond of conditions) {
-        const parts = cond.trim().split(/\s*=\s*/);
-        if (parts.length === 2) {
-          const col = parts[0].trim();
-          const valExpr = parts[1].trim();
-          let expectedVal;
-          if (valExpr === '?') {
-            expectedVal = params[paramIdx++];
-          } else {
-            expectedVal = valExpr.replace(/^['"]|['"]$/g, '');
+        const trimmedCond = cond.trim();
+        if (trimmedCond.includes(' OR ')) {
+          const orParts = trimmedCond.replace(/[\(\)]/g, '').split(/\s+OR\s+/i);
+          let matchAny = false;
+          for (const orCond of orParts) {
+            const currentParam = orCond.includes('?') ? params[paramIdx++] : undefined;
+            if (this._evalCond(row, orCond, currentParam)) {
+              matchAny = true;
+            }
           }
-          if (String(row[col]) !== String(expectedVal)) {
+          if (!matchAny) {
             matchAll = false;
             break;
           }
+          continue;
+        }
+
+        const currentParam = trimmedCond.includes('?') ? params[paramIdx++] : undefined;
+        if (!this._evalCond(row, trimmedCond, currentParam)) {
+          matchAll = false;
+          break;
         }
       }
       return matchAll;
     });
+  }
+
+  _evalCond(row, condStr, paramVal) {
+    const isLike = condStr.toUpperCase().includes(' LIKE ');
+    const parts = isLike ? condStr.split(/\s+LIKE\s+/i) : condStr.split(/\s*=\s*/);
+    if (parts.length < 2) return true;
+
+    let col = parts[0].trim().replace(/[\(\)]/g, '');
+    if (col.includes('.')) {
+      col = col.split('.')[1].trim();
+    }
+
+    const valExpr = parts[1].trim().replace(/[\(\)]/g, '');
+    let expectedVal = valExpr === '?' ? paramVal : valExpr.replace(/^['"]|['"]$/g, '');
+
+    const rowVal = row[col] !== undefined && row[col] !== null ? String(row[col]) : '';
+
+    if (isLike) {
+      const cleanPattern = String(expectedVal || '').replace(/%/g, '').toLowerCase();
+      return rowVal.toLowerCase().includes(cleanPattern);
+    }
+
+    return String(rowVal) === String(expectedVal);
   }
 }
 
