@@ -54,9 +54,13 @@ app.use((req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`================================================`);
-  console.log(`🎯 DESAFIO 156 - Servidor rodando na porta ${PORT}`);
-  console.log(`http://localhost:${PORT}`);
-  console.log(`================================================`);
-});
+if (process.env.NODE_ENV !== 'test' && !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`================================================`);
+    console.log(`🎯 DESAFIO 156 - Servidor rodando na porta ${PORT}`);
+    console.log(`http://localhost:${PORT}`);
+    console.log(`================================================`);
+  });
+}
+
+module.exports = app;

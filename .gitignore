@@ -9,3 +9,5 @@ backend/data/*.db-shm
 .DS_Store
 *.log
 .env
+
+.vercel
