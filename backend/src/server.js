@@ -34,6 +34,7 @@ app.use('/api/prizes', require('./routes/prizes'));
 app.use('/api/challenges', require('./routes/challenges'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/audit', require('./routes/audit'));
+app.use('/api/iptu', require('./routes/iptu'));
 
 // Health Check
 app.get('/api/health', (req, res) => {

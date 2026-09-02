@@ -14,12 +14,14 @@ import {
   Tv,
   Settings,
   ShieldAlert,
-  Sliders
+  Sliders,
+  FileCheck
 } from 'lucide-react';
 
 export default function Sidebar({ activeTab, onNavigate }) {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'prova-iptu', label: 'Prova IPTU', icon: FileCheck, badge: 'NOVO' },
     { id: 'operadores', label: 'Operadores', icon: Users },
     { id: 'pontos', label: 'Pontuação', icon: PlusCircle },
     { id: 'extrato', label: 'Extrato', icon: Receipt },

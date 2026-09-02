@@ -22,6 +22,8 @@ import TVModeView from './views/TVModeView';
 import RulesView from './views/RulesView';
 import AuditView from './views/AuditView';
 import SettingsView from './views/SettingsView';
+import IptuAdminView from './views/IptuAdminView';
+import IptuOperatorExamView from './views/IptuOperatorExamView';
 
 import { apiFetch, getToken, removeToken } from './services/api';
 
@@ -30,6 +32,12 @@ export default function App() {
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [campaign, setCampaign] = useState(null);
+  const [publicExamToken, setPublicExamToken] = useState(() => {
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/prova-iptu/')) {
+      return window.location.pathname.replace('/prova-iptu/', '').trim();
+    }
+    return null;
+  });
 
   // Notifications
   const [toasts, setToasts] = useState([]);
@@ -91,6 +99,18 @@ export default function App() {
     showToast('Sessão encerrada com sucesso.', 'info');
   };
 
+  if (publicExamToken) {
+    return (
+      <IptuOperatorExamView
+        tokenCode={publicExamToken}
+        onBackToApp={() => {
+          window.history.pushState({}, '', '/');
+          setPublicExamToken(null);
+        }}
+      />
+    );
+  }
+
   if (loadingAuth) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -137,6 +157,10 @@ export default function App() {
 
           {activeTab === 'dashboard' && (
             <DashboardView onNavigate={(tab) => setActiveTab(tab)} campaign={campaign} />
+          )}
+
+          {activeTab === 'prova-iptu' && (
+            <IptuAdminView showToast={showToast} />
           )}
 
           {activeTab === 'operadores' && (
