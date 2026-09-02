@@ -46,6 +46,13 @@ async function runTests() {
     throw new Error(`Token inválido: ${testOp.token}`);
   }
 
+  // Test 2.1: Create Operator without Matrícula (Optional Matrícula)
+  const testOpSemMat = await createIptuOperator({ nome: 'Operador Apenas Nome' });
+  console.log(`✅ Operador sem matrícula criado: ${testOpSemMat.nome} | Matrícula gerada: ${testOpSemMat.matricula} | Token: ${testOpSemMat.token}`);
+  if (!testOpSemMat.matricula || !testOpSemMat.matricula.startsWith('OP-')) {
+    throw new Error('Falha ao auto-gerar matrícula para operador sem matrícula');
+  }
+
   // Test 3: Public Operator Session
   console.log('\n--- Teste 3: Sessão Pública do Operador (sem gabarito) ---');
   const session = await getOperatorSessionByToken(testOp.token);

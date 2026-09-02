@@ -186,17 +186,26 @@ async function getIptuOperators(search = '', status = '') {
 
 async function createIptuOperator({ nome, matricula, operadorId = null }, username = 'Admin') {
   const nomClean = String(nome || '').trim();
-  const matClean = String(matricula || '').trim().toUpperCase();
-
-  if (!nomClean || !matClean) {
-    throw new Error('Nome e Matrícula são obrigatórios para o cadastro.');
+  if (!nomClean) {
+    throw new Error('O nome do operador é obrigatório.');
   }
 
-  // Check duplicate
   const existingList = await getIptuOperators();
-  const duplicate = existingList.find(o => o.matricula.toUpperCase() === matClean);
-  if (duplicate) {
-    throw new Error(`Já existe um operador cadastrado com a matrícula ${matClean}.`);
+  let matClean = String(matricula || '').trim().toUpperCase();
+
+  // Se não informou matrícula, gerar automaticamente código único
+  if (!matClean) {
+    let randomNum = Math.floor(10000 + Math.random() * 90000);
+    while (existingList.some(o => o.matricula === `OP-${randomNum}`)) {
+      randomNum = Math.floor(10000 + Math.random() * 90000);
+    }
+    matClean = `OP-${randomNum}`;
+  } else {
+    // Se informou matrícula, verificar duplicidade
+    const duplicate = existingList.find(o => o.matricula.toUpperCase() === matClean);
+    if (duplicate) {
+      throw new Error(`Já existe um operador cadastrado com a matrícula ${matClean}.`);
+    }
   }
 
   let createdOp = null;
@@ -318,23 +327,23 @@ async function importIptuOperatorsBulk(operatorsList, username = 'Admin') {
     const nome = (item['Nome'] || item['Nome Completo'] || item['nome'] || item['nome_completo'] || item['OPERADOR'] || '').toString().trim();
     const matricula = (item['Matrícula'] || item['Matricula'] || item['matricula'] || item['MATRICULA'] || item['Registro'] || '').toString().trim().toUpperCase();
 
-    if (!nome || !matricula) {
+    if (!nome) {
       errorCount++;
-      details.push({ nome: nome || 'Vazio', matricula: matricula || 'Vazio', status: 'erro', motivo: 'Campos incompletos' });
+      details.push({ nome: 'Vazio', matricula: matricula || 'Vazio', status: 'erro', motivo: 'Nome ausente' });
       continue;
     }
 
-    if (existingMatMap.has(matricula)) {
+    if (matricula && existingMatMap.has(matricula)) {
       duplicateCount++;
       details.push({ nome, matricula, status: 'duplicado', motivo: 'Matrícula já existente' });
       continue;
     }
 
     try {
-      await createIptuOperator({ nome, matricula }, username);
-      existingMatMap.add(matricula);
+      const created = await createIptuOperator({ nome, matricula: matricula || null }, username);
+      if (created && created.matricula) existingMatMap.add(created.matricula);
       importedCount++;
-      details.push({ nome, matricula, status: 'importado' });
+      details.push({ nome, matricula: created.matricula, status: 'importado' });
     } catch (err) {
       errorCount++;
       details.push({ nome, matricula, status: 'erro', motivo: err.message });

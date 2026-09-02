@@ -112,8 +112,8 @@ export default function IptuAdminView({ showToast }) {
   // Operator Actions
   const handleSaveOperator = async (e) => {
     e.preventDefault();
-    if (!opFormData.nome || !opFormData.matricula) {
-      showToast('Nome e Matrícula são obrigatórios.', 'warning');
+    if (!opFormData.nome || !opFormData.nome.trim()) {
+      showToast('O nome completo do operador é obrigatório.', 'warning');
       return;
     }
 
@@ -990,14 +990,13 @@ export default function IptuAdminView({ showToast }) {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Matrícula</label>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Matrícula (Opcional)</label>
                 <input
                   type="text"
-                  placeholder="Ex: OP15625"
+                  placeholder="Ex: OP15625 (Opcional — gerada automaticamente se vazio)"
                   value={opFormData.matricula}
                   onChange={(e) => setOpFormData({ ...opFormData, matricula: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-800 text-xs text-white p-3 rounded-xl focus:border-amber-400 outline-none font-mono"
-                  required
                 />
               </div>
 
