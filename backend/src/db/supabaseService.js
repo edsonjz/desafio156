@@ -258,6 +258,19 @@ async function updateOperator(id, { name, registration, status, notes }) {
   return data[0];
 }
 
+async function deleteOperator(id) {
+  await supabase.from('tickets').delete().eq('operator_id', id);
+  await supabase.from('point_transactions').delete().eq('operator_id', id);
+  await supabase.from('prizes').delete().eq('operator_id', id);
+  await supabase.from('weekly_highlights').delete().eq('operator_id', id);
+  await supabase.from('roulette_spins').delete().eq('operator_id', id);
+  await supabase.from('operator_double_points').delete().eq('operator_id', id);
+  await supabase.from('challenge_results').delete().eq('operator_id', id);
+  const { error } = await supabase.from('operators').delete().eq('id', id);
+  if (error) throw error;
+  return true;
+}
+
 async function importOperatorsBulk(operatorsList) {
   if (!Array.isArray(operatorsList) || operatorsList.length === 0) {
     return { importedCount: 0 };
@@ -506,6 +519,49 @@ async function getTickets(campaignId = 1) {
   }));
 }
 
+async function createTicket({ operator_id, campaign_id = 1, ticket_number, ticket_code, status = 'valid', generated_at }) {
+  let num = ticket_number;
+  if (!num) {
+    const { data: allTickets } = await supabase
+      .from('tickets')
+      .select('ticket_number')
+      .eq('campaign_id', campaign_id)
+      .order('ticket_number', { ascending: false })
+      .limit(1);
+    num = (allTickets && allTickets[0] && allTickets[0].ticket_number ? allTickets[0].ticket_number : 0) + 1;
+  }
+  const code = ticket_code || `TKT-${String(num).padStart(4, '0')}`;
+  const payload = {
+    operator_id: Number(operator_id),
+    campaign_id: Number(campaign_id),
+    ticket_number: Number(num),
+    ticket_code: code,
+    status: status || 'valid'
+  };
+  if (generated_at) payload.generated_at = generated_at;
+  const { data, error } = await supabase.from('tickets').insert([payload]).select();
+  if (error) throw error;
+  return data[0];
+}
+
+async function updateTicket(id, fields) {
+  const updateData = {};
+  if (fields.operator_id !== undefined) updateData.operator_id = Number(fields.operator_id);
+  if (fields.ticket_number !== undefined) updateData.ticket_number = Number(fields.ticket_number);
+  if (fields.ticket_code !== undefined) updateData.ticket_code = fields.ticket_code;
+  if (fields.status !== undefined) updateData.status = fields.status;
+
+  const { data, error } = await supabase.from('tickets').update(updateData).eq('id', id).select();
+  if (error) throw error;
+  return data[0];
+}
+
+async function deleteTicket(id) {
+  const { error } = await supabase.from('tickets').delete().eq('id', id);
+  if (error) throw error;
+  return true;
+}
+
 // ==========================================
 // PRIZES
 // ==========================================
@@ -546,6 +602,30 @@ async function updatePrizeStatus(id, status, observation = null) {
   const { data, error } = await supabase.from('prizes').update(updateData).eq('id', id).select();
   if (error) throw error;
   return data[0];
+}
+
+async function updatePrize(id, fields) {
+  const updateData = {};
+  if (fields.operator_id !== undefined) updateData.operator_id = Number(fields.operator_id);
+  if (fields.name !== undefined) updateData.name = fields.name.trim();
+  if (fields.category !== undefined) updateData.category = fields.category;
+  if (fields.status !== undefined) updateData.status = fields.status;
+  if (fields.observation !== undefined) updateData.observation = fields.observation;
+  if (fields.status === 'Utilizado' && !fields.used_at) {
+    updateData.used_at = new Date().toISOString();
+  } else if (fields.status === 'Pendente') {
+    updateData.used_at = null;
+  }
+
+  const { data, error } = await supabase.from('prizes').update(updateData).eq('id', id).select();
+  if (error) throw error;
+  return data[0];
+}
+
+async function deletePrize(id) {
+  const { error } = await supabase.from('prizes').delete().eq('id', id);
+  if (error) throw error;
+  return true;
 }
 
 // ==========================================
@@ -632,6 +712,13 @@ async function updateChallenge(id, challenge) {
   return data[0];
 }
 
+async function deleteChallenge(id) {
+  await supabase.from('challenge_results').delete().eq('challenge_id', id);
+  const { error } = await supabase.from('challenges').delete().eq('id', id);
+  if (error) throw error;
+  return true;
+}
+
 // ==========================================
 // AUDIT LOGS
 // ==========================================
@@ -649,6 +736,7 @@ module.exports = {
   getOperatorById,
   createOperator,
   updateOperator,
+  deleteOperator,
   importOperatorsBulk,
   ROULETTE_PRIZES,
   spinRoulette,
@@ -661,7 +749,12 @@ module.exports = {
   updateRule,
   deleteRule,
   getTickets,
+  createTicket,
+  updateTicket,
+  deleteTicket,
   getPrizes,
+  updatePrize,
+  deletePrize,
   updatePrizeStatus,
   getHighlights,
   addHighlight,
@@ -669,5 +762,6 @@ module.exports = {
   getChallenges,
   createChallenge,
   updateChallenge,
+  deleteChallenge,
   getAuditLogs
 };

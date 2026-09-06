@@ -7,6 +7,7 @@ const {
   getOperatorById,
   createOperator,
   updateOperator,
+  deleteOperator,
   importOperatorsBulk,
   logAudit
 } = require('../db/supabaseService');
@@ -189,6 +190,32 @@ router.post('/import-confirm', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Error during bulk import in Supabase:', err);
     return res.status(500).json({ error: 'Falha ao salvar operadores no Supabase.' });
+  }
+});
+
+// DELETE /api/operators/:id - Delete operator and its associated data
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const data = await getOperatorById(req.params.id);
+    if (!data || !data.operator) {
+      return res.status(404).json({ error: 'Operador não encontrado.' });
+    }
+
+    await deleteOperator(req.params.id);
+
+    await logAudit(
+      req.user.username,
+      'DELETE_OPERATOR',
+      'operators',
+      req.params.id,
+      { name: data.operator.name, registration: data.operator.registration },
+      null
+    );
+
+    return res.json({ message: `Operador "${data.operator.name}" excluído com sucesso.` });
+  } catch (err) {
+    console.error('Error deleting operator:', err);
+    return res.status(500).json({ error: 'Falha ao excluir operador.' });
   }
 });
 

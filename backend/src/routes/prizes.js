@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { supabase, logAudit } = require('../db/supabaseService');
+const { supabase, logAudit, updatePrize, deletePrize } = require('../db/supabaseService');
 const { authMiddleware } = require('../middleware/auth');
 
 // GET /api/prizes - List operational prizes with status filter from Supabase
@@ -118,6 +118,55 @@ router.put('/:id/status', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Error updating prize status in Supabase:', err);
     return res.status(500).json({ error: 'Falha ao atualizar status do prêmio.' });
+  }
+});
+
+// PUT /api/prizes/:id - Edit prize details
+router.put('/:id', authMiddleware, async (req, res) => {
+  const { operatorId, name, category, status, observation } = req.body;
+
+  try {
+    const { data: pList } = await supabase.from('prizes').select('*').eq('id', req.params.id).limit(1);
+    const prize = pList && pList[0];
+    if (!prize) {
+      return res.status(404).json({ error: 'Prêmio não encontrado.' });
+    }
+
+    const updateFields = {};
+    if (operatorId !== undefined) updateFields.operator_id = Number(operatorId);
+    if (name !== undefined) updateFields.name = name.trim();
+    if (category !== undefined) updateFields.category = category;
+    if (status !== undefined) updateFields.status = status;
+    if (observation !== undefined) updateFields.observation = observation;
+
+    const updated = await updatePrize(req.params.id, updateFields);
+
+    await logAudit(req.user.username, 'UPDATE_PRIZE', 'prizes', req.params.id, prize, updateFields);
+
+    return res.json({ message: 'Prêmio atualizado com sucesso!', prize: updated });
+  } catch (err) {
+    console.error('Error updating prize in Supabase:', err);
+    return res.status(500).json({ error: 'Falha ao atualizar prêmio.' });
+  }
+});
+
+// DELETE /api/prizes/:id - Delete prize
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { data: pList } = await supabase.from('prizes').select('*').eq('id', req.params.id).limit(1);
+    const prize = pList && pList[0];
+    if (!prize) {
+      return res.status(404).json({ error: 'Prêmio não encontrado.' });
+    }
+
+    await deletePrize(req.params.id);
+
+    await logAudit(req.user.username, 'DELETE_PRIZE', 'prizes', req.params.id, prize, null);
+
+    return res.json({ message: `Prêmio "${prize.name}" excluído com sucesso.` });
+  } catch (err) {
+    console.error('Error deleting prize in Supabase:', err);
+    return res.status(500).json({ error: 'Falha ao excluir prêmio.' });
   }
 });
 

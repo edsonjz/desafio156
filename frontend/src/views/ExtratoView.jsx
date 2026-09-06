@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Receipt, Search, ArrowUpRight, ArrowDownRight, Trash2, Ticket, AlertTriangle, X } from 'lucide-react';
+import { Receipt, Search, ArrowUpRight, ArrowDownRight, Trash2, Edit2, Ticket, AlertTriangle, X } from 'lucide-react';
 import { apiFetch } from '../services/api';
 
 export default function ExtratoView({ showToast }) {
@@ -10,6 +10,15 @@ export default function ExtratoView({ showToast }) {
 
   // Delete transaction modal
   const [txToDelete, setTxToDelete] = useState(null);
+
+  // Edit transaction modal
+  const [editingTx, setEditingTx] = useState(null);
+  const [editPoints, setEditPoints] = useState('');
+  const [editDate, setEditDate] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [editObs, setEditObs] = useState('');
+  const [editIndicator, setEditIndicator] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
     loadOperators();
@@ -56,6 +65,42 @@ export default function ExtratoView({ showToast }) {
       loadExtrato(selectedOpId);
     } catch (err) {
       showToast(err.message, 'error');
+    }
+  };
+
+  const openEditModal = (tx) => {
+    setEditingTx(tx);
+    setEditPoints(tx.points);
+    setEditDate(tx.event_date ? tx.event_date.substring(0, 10) : '');
+    setEditDesc(tx.description || '');
+    setEditObs(tx.observation || '');
+    setEditIndicator(tx.indicator_value || '');
+  };
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    if (!editingTx) return;
+
+    setSavingEdit(true);
+    try {
+      const res = await apiFetch(`/points/${editingTx.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          points: Number(editPoints),
+          eventDate: editDate,
+          description: editDesc,
+          observation: editObs,
+          indicatorValue: editIndicator
+        })
+      });
+
+      showToast(res.message, 'success');
+      setEditingTx(null);
+      loadExtrato(selectedOpId);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -211,13 +256,22 @@ export default function ExtratoView({ showToast }) {
                     </td>
 
                     <td className="py-3 px-4 text-right">
-                      <button
-                        onClick={() => setTxToDelete(tx)}
-                        className="p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition"
-                        title="Excluir este lançamento"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => openEditModal(tx)}
+                          className="p-1 text-slate-500 hover:text-amber-400 hover:bg-amber-500/10 rounded transition"
+                          title="Editar este lançamento"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setTxToDelete(tx)}
+                          className="p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition"
+                          title="Excluir este lançamento"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -226,6 +280,98 @@ export default function ExtratoView({ showToast }) {
           </table>
         </div>
       </div>
+
+      {/* Edit Modal */}
+      {editingTx && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Edit2 className="w-5 h-5 text-amber-400" />
+                <span>Editar Lançamento de Pontos</span>
+              </h3>
+              <button onClick={() => setEditingTx(null)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1">Descrição / Motivo</label>
+                <input
+                  type="text"
+                  required
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1">Pontos *</label>
+                  <input
+                    type="number"
+                    required
+                    value={editPoints}
+                    onChange={(e) => setEditPoints(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-amber-400 font-bold focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1">Data do Evento *</label>
+                  <input
+                    type="date"
+                    required
+                    value={editDate}
+                    onChange={(e) => setEditDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1">Indicador / Nota</label>
+                <input
+                  type="text"
+                  value={editIndicator}
+                  onChange={(e) => setEditIndicator(e.target.value)}
+                  placeholder="Ex: Nota 100% ou TMA 3:40"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1">Observação / Justificativa</label>
+                <textarea
+                  rows="2"
+                  value={editObs}
+                  onChange={(e) => setEditObs(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingTx(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-lg shadow-amber-500/20"
+                >
+                  {savingEdit ? 'Salvando...' : 'Salvar Alterações'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {txToDelete && (

@@ -335,6 +335,114 @@ router.post('/mass', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/points - List transactions with operator details
+router.get('/', authMiddleware, async (req, res) => {
+  const { operatorId, search, limit } = req.query;
+  try {
+    let query = supabase
+      .from('point_transactions')
+      .select('*, operators(name, registration), point_rules(name, periodicity, type)')
+      .order('created_at', { ascending: false });
+
+    if (operatorId) {
+      query = query.eq('operator_id', Number(operatorId));
+    }
+    if (limit) {
+      query = query.limit(Number(limit));
+    } else {
+      query = query.limit(100);
+    }
+
+    const { data: txs, error } = await query;
+    if (error) {
+      const { data: rawTxs } = await supabase.from('point_transactions').select('*').order('created_at', { ascending: false }).limit(limit ? Number(limit) : 100);
+      const { data: ops } = await supabase.from('operators').select('id, name, registration');
+      const { data: rls } = await supabase.from('point_rules').select('id, name, periodicity, type');
+      const opMap = {};
+      (ops || []).forEach(o => { opMap[o.id] = o; });
+      const rlMap = {};
+      (rls || []).forEach(r => { rlMap[r.id] = r; });
+
+      let result = (rawTxs || []).map(t => ({
+        ...t,
+        operator_name: opMap[t.operator_id] ? opMap[t.operator_id].name : 'Operador',
+        operator_registration: opMap[t.operator_id] ? opMap[t.operator_id].registration : '-',
+        rule_name: rlMap[t.rule_id] ? rlMap[t.rule_id].name : t.description
+      }));
+      if (search) {
+        const s = search.toLowerCase();
+        result = result.filter(t => (t.operator_name && t.operator_name.toLowerCase().includes(s)) || (t.description && t.description.toLowerCase().includes(s)));
+      }
+      return res.json(result);
+    }
+
+    let result = (txs || []).map(t => ({
+      ...t,
+      operator_name: t.operators ? t.operators.name : 'Operador',
+      operator_registration: t.operators ? t.operators.registration : '-',
+      rule_name: t.point_rules ? t.point_rules.name : t.description
+    }));
+
+    if (search) {
+      const s = search.toLowerCase();
+      result = result.filter(t => (t.operator_name && t.operator_name.toLowerCase().includes(s)) || (t.description && t.description.toLowerCase().includes(s)));
+    }
+
+    return res.json(result);
+  } catch (err) {
+    console.error('Error fetching point transactions:', err);
+    return res.status(500).json({ error: 'Erro ao carregar lançamentos de pontos.' });
+  }
+});
+
+// PUT /api/points/:id - Edit point transaction
+router.put('/:id', authMiddleware, async (req, res) => {
+  if (await isCampaignLocked()) {
+    return res.status(403).json({ error: 'A campanha está ENCERRADA. Edição de lançamentos está bloqueada.' });
+  }
+
+  const { points, eventDate, description, observation, indicatorValue, ruleId } = req.body;
+
+  try {
+    const { data: txList } = await supabase.from('point_transactions').select('*').eq('id', req.params.id).limit(1);
+    const tx = txList && txList[0];
+    if (!tx) {
+      return res.status(404).json({ error: 'Lançamento não encontrado.' });
+    }
+
+    const updateFields = {};
+    if (points !== undefined) updateFields.points = Number(points);
+    if (eventDate !== undefined) updateFields.event_date = eventDate;
+    if (description !== undefined) updateFields.description = description;
+    if (observation !== undefined) updateFields.observation = observation;
+    if (indicatorValue !== undefined) updateFields.indicator_value = indicatorValue;
+    if (ruleId !== undefined) updateFields.rule_id = ruleId ? Number(ruleId) : null;
+
+    const { data: updatedData, error } = await supabase
+      .from('point_transactions')
+      .update(updateFields)
+      .eq('id', req.params.id)
+      .select();
+
+    if (error) throw error;
+
+    // Resync tickets for the operator
+    const syncResult = await syncOperatorTickets(tx.operator_id, 1);
+
+    await logAudit(req.user.username, 'UPDATE_TRANSACTION', 'point_transactions', req.params.id, tx, updateFields);
+
+    return res.json({
+      message: 'Lançamento atualizado com sucesso.',
+      transaction: updatedData[0],
+      totalPoints: syncResult.totalPoints,
+      totalTickets: syncResult.totalTickets
+    });
+  } catch (err) {
+    console.error('Error updating point transaction:', err);
+    return res.status(500).json({ error: 'Falha ao atualizar lançamento de pontos.' });
+  }
+});
+
 // DELETE /api/points/:id - Delete transaction
 router.delete('/:id', authMiddleware, async (req, res) => {
   if (await isCampaignLocked()) {

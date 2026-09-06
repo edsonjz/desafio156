@@ -6,6 +6,7 @@ import {
   FileSpreadsheet,
   Download,
   Edit2,
+  Trash2,
   CheckCircle,
   AlertTriangle,
   X,
@@ -29,6 +30,10 @@ export default function OperatorsView({ onNavigate, showToast }) {
 
   // Edit Modal
   const [editOp, setEditOp] = useState(null);
+
+  // Delete Modal
+  const [deletingOp, setDeletingOp] = useState(null);
+  const [deletingLoading, setDeletingLoading] = useState(false);
 
   // Import Modal
   const [showImportModal, setShowImportModal] = useState(false);
@@ -88,6 +93,21 @@ export default function OperatorsView({ onNavigate, showToast }) {
       loadOperators();
     } catch (err) {
       showToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteOperator = async () => {
+    if (!deletingOp) return;
+    setDeletingLoading(true);
+    try {
+      const res = await apiFetch(`/operators/${deletingOp.id}`, { method: 'DELETE' });
+      showToast(res.message, 'success');
+      setDeletingOp(null);
+      loadOperators();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setDeletingLoading(false);
     }
   };
 
@@ -319,6 +339,14 @@ export default function OperatorsView({ onNavigate, showToast }) {
                           title="Editar Cadastro"
                         >
                           <Edit2 className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          onClick={() => setDeletingOp(op)}
+                          className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
+                          title="Excluir Operador"
+                        >
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </td>
@@ -574,6 +602,48 @@ export default function OperatorsView({ onNavigate, showToast }) {
                   {importing ? 'Importando...' : 'Confirmar Importação'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Operator Confirmation Modal */}
+      {deletingOp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-slate-900 border-2 border-rose-500/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="w-12 h-12 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto border border-rose-500/40">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="text-center">
+              <h3 className="text-base font-bold text-white mb-1">Excluir Operador?</h3>
+              <p className="text-xs text-slate-300">
+                Tem certeza que deseja excluir o cadastro de{' '}
+                <strong className="text-white font-bold">{deletingOp.name}</strong> (Matrícula: <span className="font-mono text-amber-400">{deletingOp.registration}</span>)?
+              </p>
+            </div>
+
+            <div className="bg-rose-950/30 border border-rose-800/40 rounded-xl p-3 text-[11px] text-rose-200/90 leading-relaxed">
+              ⚠️ <strong>Atenção:</strong> Esta ação removerá definitivamente o operador da campanha, incluindo todos os seus lançamentos de pontos ({deletingOp.totalPoints} pts), bilhetes físicos emitidos ({deletingOp.totalTickets} bilhetes) e histórico de premiações.
+            </div>
+
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingOp(null)}
+                className="w-1/2 py-2.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                disabled={deletingLoading}
+                onClick={handleDeleteOperator}
+                className="w-1/2 py-2.5 rounded-xl text-xs font-extrabold bg-rose-600 hover:bg-rose-700 text-white shadow-lg shadow-rose-600/20 transition disabled:opacity-50"
+              >
+                {deletingLoading ? 'Excluindo...' : 'Confirmar Exclusão'}
+              </button>
             </div>
           </div>
         </div>

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { supabase, logAudit, syncOperatorTickets } = require('../db/supabaseService');
+const { supabase, logAudit, syncOperatorTickets, updateChallenge, deleteChallenge } = require('../db/supabaseService');
 const { authMiddleware } = require('../middleware/auth');
 
 // GET /api/challenges - List all challenges from Supabase
@@ -135,6 +135,56 @@ router.put('/:id/conclude', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Error concluding challenge in Supabase:', err);
     return res.status(500).json({ error: 'Falha ao concluir desafio.' });
+  }
+});
+
+// PUT /api/challenges/:id - Edit challenge details
+router.put('/:id', authMiddleware, async (req, res) => {
+  const { name, description, startDate, endDate, rewardPoints, status } = req.body;
+
+  try {
+    const { data: oldList } = await supabase.from('challenges').select('*').eq('id', req.params.id).limit(1);
+    const oldCh = oldList && oldList[0];
+    if (!oldCh) {
+      return res.status(404).json({ error: 'Desafio não encontrado.' });
+    }
+
+    const updateFields = {};
+    if (name !== undefined) updateFields.name = name.trim();
+    if (description !== undefined) updateFields.description = description.trim();
+    if (startDate !== undefined) updateFields.start_date = startDate;
+    if (endDate !== undefined) updateFields.end_date = endDate;
+    if (rewardPoints !== undefined) updateFields.reward_points = Number(rewardPoints);
+    if (status !== undefined) updateFields.status = status;
+
+    const updated = await updateChallenge(req.params.id, updateFields);
+
+    await logAudit(req.user.username, 'UPDATE_CHALLENGE', 'challenges', req.params.id, oldCh, updateFields);
+
+    return res.json({ message: 'Desafio atualizado com sucesso!', challenge: updated });
+  } catch (err) {
+    console.error('Error updating challenge:', err);
+    return res.status(500).json({ error: 'Falha ao atualizar desafio.' });
+  }
+});
+
+// DELETE /api/challenges/:id - Delete challenge
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { data: oldList } = await supabase.from('challenges').select('*').eq('id', req.params.id).limit(1);
+    const oldCh = oldList && oldList[0];
+    if (!oldCh) {
+      return res.status(404).json({ error: 'Desafio não encontrado.' });
+    }
+
+    await deleteChallenge(req.params.id);
+
+    await logAudit(req.user.username, 'DELETE_CHALLENGE', 'challenges', req.params.id, oldCh, null);
+
+    return res.json({ message: `Desafio "${oldCh.name}" excluído com sucesso.` });
+  } catch (err) {
+    console.error('Error deleting challenge:', err);
+    return res.status(500).json({ error: 'Falha ao excluir desafio.' });
   }
 });
 

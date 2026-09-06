@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getCampaign, lockCampaign, logAudit } = require('../db/supabaseService');
+const { getCampaign, updateCampaign, lockCampaign, logAudit } = require('../db/supabaseService');
 const { authMiddleware } = require('../middleware/auth');
 
 // GET /api/campaign/status
@@ -27,6 +27,36 @@ router.get('/status', async (req, res) => {
   } catch (err) {
     console.error('Error fetching campaign status from Supabase:', err);
     return res.status(500).json({ error: 'Erro ao carregar status da campanha.' });
+  }
+});
+
+// PUT /api/campaign - Edit campaign settings (dates, title, unlock)
+router.put('/', authMiddleware, async (req, res) => {
+  const { name, subtitle, startDate, endDate, status } = req.body;
+
+  try {
+    const oldCampaign = await getCampaign();
+
+    const updateFields = {};
+    if (name !== undefined) updateFields.name = name.trim();
+    if (subtitle !== undefined) updateFields.subtitle = subtitle.trim();
+    if (startDate !== undefined) updateFields.start_date = startDate;
+    if (endDate !== undefined) updateFields.end_date = endDate;
+    if (status !== undefined) {
+      updateFields.status = status;
+      if (status === 'active') {
+        updateFields.locked_at = null;
+      }
+    }
+
+    const updated = await updateCampaign(updateFields);
+
+    await logAudit(req.user.username, 'UPDATE_CAMPAIGN', 'campaigns', '1', oldCampaign, updateFields);
+
+    return res.json({ message: 'Configurações da campanha atualizadas com sucesso!', campaign: updated });
+  } catch (err) {
+    console.error('Error updating campaign in Supabase:', err);
+    return res.status(500).json({ error: 'Falha ao atualizar configurações da campanha.' });
   }
 });
 

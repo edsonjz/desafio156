@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Target, Plus, CheckCircle, Trophy, Users, Calendar, Sparkles } from 'lucide-react';
+import { Target, Plus, CheckCircle, Trophy, Users, Calendar, Sparkles, Edit2, Trash2, X, AlertTriangle } from 'lucide-react';
 import { apiFetch } from '../services/api';
 
 export default function ChallengesView({ showToast, onTicketAlert }) {
@@ -15,6 +15,20 @@ export default function ChallengesView({ showToast, onTicketAlert }) {
   const [endDate, setEndDate] = useState('2026-09-15');
   const [rewardPoints, setRewardPoints] = useState('30');
   const [selectedOpIds, setSelectedOpIds] = useState([]);
+
+  // Edit Challenge Modal
+  const [editingChallenge, setEditingChallenge] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [editStartDate, setEditStartDate] = useState('');
+  const [editEndDate, setEditEndDate] = useState('');
+  const [editRewardPoints, setEditRewardPoints] = useState('');
+  const [editStatus, setEditStatus] = useState('ativo');
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // Delete Challenge Modal
+  const [deletingChallenge, setDeletingChallenge] = useState(null);
+  const [deletingLoading, setDeletingLoading] = useState(false);
 
   // Conclude Modal
   const [concludeChallenge, setConcludeChallenge] = useState(null);
@@ -92,6 +106,60 @@ export default function ChallengesView({ showToast, onTicketAlert }) {
     }
   };
 
+  const openEditModal = (ch) => {
+    setEditingChallenge(ch);
+    setEditName(ch.name || '');
+    setEditDesc(ch.description || '');
+    setEditStartDate(ch.start_date ? ch.start_date.substring(0, 10) : '2026-09-01');
+    setEditEndDate(ch.end_date ? ch.end_date.substring(0, 10) : '2026-12-11');
+    setEditRewardPoints(ch.reward_points || '30');
+    setEditStatus(ch.status || 'ativo');
+  };
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    if (!editingChallenge) return;
+
+    setSavingEdit(true);
+    try {
+      const res = await apiFetch(`/challenges/${editingChallenge.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: editName,
+          description: editDesc,
+          startDate: editStartDate,
+          endDate: editEndDate,
+          rewardPoints: Number(editRewardPoints),
+          status: editStatus
+        })
+      });
+
+      showToast(res.message, 'success');
+      setEditingChallenge(null);
+      loadData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDeleteChallenge = async () => {
+    if (!deletingChallenge) return;
+
+    setDeletingLoading(true);
+    try {
+      const res = await apiFetch(`/challenges/${deletingChallenge.id}`, { method: 'DELETE' });
+      showToast(res.message, 'success');
+      setDeletingChallenge(null);
+      loadData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setDeletingLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -139,11 +207,29 @@ export default function ChallengesView({ showToast, onTicketAlert }) {
                   <span>{ch.start_date} → {ch.end_date}</span>
                 </span>
 
-                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                  ch.status === 'ativo' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800 text-slate-400'
-                }`}>
-                  {ch.status}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                    ch.status === 'ativo' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800 text-slate-400'
+                  }`}>
+                    {ch.status}
+                  </span>
+
+                  <button
+                    onClick={() => openEditModal(ch)}
+                    title="Editar Desafio"
+                    className="p-1 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-lg transition"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+
+                  <button
+                    onClick={() => setDeletingChallenge(ch)}
+                    title="Excluir Desafio"
+                    className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
 
               <h3 className="text-lg font-black text-white mb-2">{ch.name}</h3>
@@ -313,6 +399,153 @@ export default function ChallengesView({ showToast, onTicketAlert }) {
                 className="px-4 py-2 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/20 disabled:opacity-50"
               >
                 {submitting ? 'Concedendo...' : `Confirmar +${concludeChallenge.reward_points} pts (${completedOpIds.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Challenge Modal */}
+      {editingChallenge && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Edit2 className="w-5 h-5 text-amber-400" />
+                <span>Editar Desafio Especial</span>
+              </h3>
+              <button onClick={() => setEditingChallenge(null)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Nome do Desafio *</label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Descrição / Regra *</label>
+                <textarea
+                  rows="2"
+                  required
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Início *</label>
+                  <input
+                    type="date"
+                    required
+                    value={editStartDate}
+                    onChange={(e) => setEditStartDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Fim *</label>
+                  <input
+                    type="date"
+                    required
+                    value={editEndDate}
+                    onChange={(e) => setEditEndDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Pontos *</label>
+                  <input
+                    type="number"
+                    required
+                    value={editRewardPoints}
+                    onChange={(e) => setEditRewardPoints(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-amber-400 font-bold focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Status do Desafio</label>
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
+                >
+                  <option value="ativo">Ativo (Em andamento)</option>
+                  <option value="concluido">Concluído</option>
+                  <option value="cancelado">Cancelado</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingChallenge(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="px-4 py-2 rounded-xl text-xs font-extrabold bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-lg shadow-amber-500/20"
+                >
+                  {savingEdit ? 'Salvando...' : 'Salvar Alterações'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Challenge Modal */}
+      {deletingChallenge && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-slate-900 border-2 border-rose-500/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="w-12 h-12 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto border border-rose-500/40">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="text-center">
+              <h3 className="text-base font-bold text-white mb-1">Excluir Desafio?</h3>
+              <p className="text-xs text-slate-300">
+                Tem certeza que deseja excluir o desafio <strong className="text-white">"{deletingChallenge.name}"</strong>?
+              </p>
+            </div>
+
+            <div className="bg-rose-950/30 border border-rose-800/40 rounded-xl p-3 text-[11px] text-rose-200/90 leading-relaxed">
+              ⚠️ Esta ação removerá o desafio e o histórico de inscrições deste objetivo especial.
+            </div>
+
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingChallenge(null)}
+                className="w-1/2 py-2.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                disabled={deletingLoading}
+                onClick={handleDeleteChallenge}
+                className="w-1/2 py-2.5 rounded-xl text-xs font-extrabold bg-rose-600 hover:bg-rose-700 text-white shadow-lg shadow-rose-600/20 disabled:opacity-50"
+              >
+                {deletingLoading ? 'Excluindo...' : 'Confirmar Exclusão'}
               </button>
             </div>
           </div>
