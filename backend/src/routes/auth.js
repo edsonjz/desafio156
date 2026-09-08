@@ -8,31 +8,41 @@ const { authMiddleware, requireMasterAdmin, JWT_SECRET } = require('../middlewar
 // In-memory sliding window rate limiter for login protection
 const loginAttempts = new Map();
 function rateLimitLogin(req, res, next) {
-  const ip = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
-  const now = Date.now();
-  const windowMs = 60 * 1000; // 1 minute
-  const maxAttempts = 5;
+  try {
+    const rawIp = req.headers['x-forwarded-for'] || req.ip || req.socket?.remoteAddress || 'unknown';
+    const ip = Array.isArray(rawIp) ? rawIp[0] : String(rawIp).split(',')[0].trim();
+    const now = Date.now();
+    const windowMs = 60 * 1000; // 1 minute
+    const maxAttempts = 5;
 
-  const attempts = (loginAttempts.get(ip) || []).filter(t => now - t < windowMs);
-  loginAttempts.set(ip, attempts);
+    const attempts = (loginAttempts.get(ip) || []).filter(t => now - t < windowMs);
+    loginAttempts.set(ip, attempts);
 
-  if (attempts.length >= maxAttempts) {
-    return res.status(429).json({
-      error: 'Muitas tentativas de login incorretas. Por segurança, aguarde 1 minuto para tentar novamente.'
-    });
+    if (attempts.length >= maxAttempts) {
+      return res.status(429).json({
+        error: 'Muitas tentativas de login incorretas. Por segurança, aguarde 1 minuto para tentar novamente.'
+      });
+    }
+
+    req.recordFailedAttempt = () => {
+      try {
+        const list = loginAttempts.get(ip) || [];
+        list.push(Date.now());
+        loginAttempts.set(ip, list);
+      } catch (e) {}
+    };
+
+    req.clearFailedAttempts = () => {
+      try {
+        loginAttempts.delete(ip);
+      } catch (e) {}
+    };
+
+    next();
+  } catch (err) {
+    console.error('Rate limit error:', err);
+    next();
   }
-
-  req.recordFailedAttempt = () => {
-    const list = loginAttempts.get(ip) || [];
-    list.push(Date.now());
-    loginAttempts.set(ip, list);
-  };
-
-  req.clearFailedAttempts = () => {
-    loginAttempts.delete(ip);
-  };
-
-  next();
 }
 
 // POST /api/auth/login
@@ -58,17 +68,24 @@ router.post('/login', rateLimitLogin, async (req, res) => {
 
     const admin = admins && admins[0];
     if (!admin) {
-      req.recordFailedAttempt();
+      if (req.recordFailedAttempt) req.recordFailedAttempt();
       return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
     }
 
-    const isMatch = bcrypt.compareSync(password, admin.password_hash);
+    let isMatch = false;
+    try {
+      isMatch = admin.password_hash ? bcrypt.compareSync(password, admin.password_hash) : false;
+    } catch (bcryptErr) {
+      console.error('Bcrypt compare error:', bcryptErr);
+      isMatch = false;
+    }
+
     if (!isMatch) {
-      req.recordFailedAttempt();
+      if (req.recordFailedAttempt) req.recordFailedAttempt();
       return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
     }
 
-    req.clearFailedAttempts();
+    if (req.clearFailedAttempts) req.clearFailedAttempts();
 
     const role = admin.role || 'admin';
     const isMaster = role === 'master';

@@ -1,4 +1,8 @@
-require('dotenv').config();
+try {
+  require('dotenv').config();
+} catch (e) {
+  // dotenv is optional in production/serverless environments like Vercel
+}
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -54,6 +58,17 @@ app.use((req, res) => {
     if (err) {
       res.status(200).send('API DESAFIO 156 ativa. Frontend não construído ainda.');
     }
+  });
+});
+
+// Global error handling middleware (always returns JSON to avoid HTML 500 error)
+app.use((err, req, res, next) => {
+  console.error('Unhandled Server Error:', err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  return res.status(err.status || 500).json({
+    error: err.message || 'Erro interno no servidor.'
   });
 });
 
