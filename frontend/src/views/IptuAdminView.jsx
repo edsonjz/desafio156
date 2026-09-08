@@ -37,22 +37,36 @@ import {
   Edit2,
   Check,
   BarChart3,
-  HelpCircle
+  HelpCircle,
+  Building2,
+  BookOpen,
+  FileText,
+  Layers,
+  Send,
+  Sparkles
 } from 'lucide-react';
 import { apiFetch, apiUpload } from '../services/api';
 
 export default function IptuAdminView({ showToast }) {
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'operadores' | 'resultados' | 'desempenho' | 'configuracoes'
+  // Prova / Secretaria selector state
+  const [provasList, setProvasList] = useState([]);
+  const [selectedProvaId, setSelectedProvaId] = useState(1);
+
+  // Tab navigation
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'operadores' | 'questoes' | 'resultados' | 'desempenho' | 'configuracoes'
   const [loading, setLoading] = useState(true);
 
   // Data states
   const [dashboardData, setDashboardData] = useState(null);
   const [operators, setOperators] = useState([]);
+  const [questions, setQuestions] = useState([]);
   const [results, setResults] = useState([]);
   const [questionsStats, setQuestionsStats] = useState(null);
   const [difficultyStats, setDifficultyStats] = useState(null);
   const [settings, setSettings] = useState({
-    nome_prova: 'Avaliação de Conhecimentos — IPTU e TCL Porto Alegre',
+    id: 1,
+    nome_prova: 'Avaliação de Conhecimentos — Tributos / Impostos',
+    secretaria: 'Tributos / Impostos',
     nota_minima_aprovacao: 70,
     tempo_maximo_minutos: 30,
     max_tentativas_padrao: 1,
@@ -73,40 +87,83 @@ export default function IptuAdminView({ showToast }) {
   const [importLoading, setImportLoading] = useState(false);
   const [importResult, setImportResult] = useState(null);
 
+  // Question Import Modal
+  const [showQuestionImportModal, setShowQuestionImportModal] = useState(false);
+  const [questionFile, setQuestionFile] = useState(null);
+  const [autoGenTokens, setAutoGenTokens] = useState(true);
+  const [replaceQuestions, setReplaceQuestions] = useState(true);
+  const [questionImportLoading, setQuestionImportLoading] = useState(false);
+  const [questionImportResult, setQuestionImportResult] = useState(null);
+
+  // New Secretaria Modal
+  const [showNewSecretariaModal, setShowNewSecretariaModal] = useState(false);
+  const [newSecretariaForm, setNewSecretariaForm] = useState({
+    secretaria: '',
+    nome_prova: '',
+    nota_minima_aprovacao: 70,
+    tempo_maximo_minutos: 30
+  });
+
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [correctionData, setCorrectionData] = useState(null);
   const [correctionLoading, setCorrectionLoading] = useState(false);
 
-  // Test Runner preview modal (simulate operator link directly)
-  const [previewToken, setPreviewToken] = useState(null);
-
+  // Load Provas List on Mount
   useEffect(() => {
-    loadAllData();
+    loadProvasList();
   }, []);
 
-  const loadAllData = async () => {
+  // Reload data when selectedProvaId changes
+  useEffect(() => {
+    if (selectedProvaId) {
+      loadAllData(selectedProvaId);
+    }
+  }, [selectedProvaId]);
+
+  const loadProvasList = async () => {
+    try {
+      const list = await apiFetch('/iptu/provas');
+      if (Array.isArray(list) && list.length > 0) {
+        setProvasList(list);
+      }
+    } catch (err) {
+      console.error('Erro ao carregar secretarias:', err);
+    }
+  };
+
+  const loadAllData = async (provaId = selectedProvaId) => {
     setLoading(true);
     try {
-      const [dash, ops, res, qStats, diffStats, cfg] = await Promise.all([
-        apiFetch('/iptu/dashboard'),
-        apiFetch('/iptu/operators'),
-        apiFetch('/iptu/results'),
-        apiFetch('/iptu/stats/questions'),
-        apiFetch('/iptu/stats/difficulty'),
-        apiFetch('/iptu/settings')
+      const pid = provaId || 1;
+      const [dash, ops, qList, res, qStats, diffStats, cfg] = await Promise.all([
+        apiFetch(`/iptu/dashboard?provaId=${pid}`),
+        apiFetch(`/iptu/operators?provaId=${pid}`),
+        apiFetch(`/iptu/provas/${pid}/questions`),
+        apiFetch(`/iptu/results?provaId=${pid}`),
+        apiFetch(`/iptu/stats/questions?provaId=${pid}`),
+        apiFetch(`/iptu/stats/difficulty?provaId=${pid}`),
+        apiFetch(`/iptu/settings?provaId=${pid}`)
       ]);
 
       setDashboardData(dash);
-      setOperators(ops);
-      setResults(res);
+      setOperators(ops || []);
+      setQuestions(qList || []);
+      setResults(res || []);
       setQuestionsStats(qStats);
       setDifficultyStats(diffStats);
       if (cfg) setSettings(cfg);
     } catch (err) {
-      showToast(err.message || 'Erro ao carregar dados da Prova IPTU.', 'error');
+      showToast(err.message || 'Erro ao carregar dados da avaliação.', 'error');
     } finally {
       setLoading(false);
     }
+  };
+
+  // Get active secretaria metadata
+  const currentSecretaria = provasList.find((p) => p.id === Number(selectedProvaId)) || {
+    id: selectedProvaId,
+    secretaria: settings.secretaria || 'Tributos / Impostos',
+    nome_prova: settings.nome_prova || 'Avaliação de Conhecimentos'
   };
 
   // Operator Actions
@@ -134,7 +191,7 @@ export default function IptuAdminView({ showToast }) {
       setShowOpModal(false);
       setEditingOp(null);
       setOpFormData({ nome: '', matricula: '' });
-      loadAllData();
+      loadAllData(selectedProvaId);
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -145,7 +202,7 @@ export default function IptuAdminView({ showToast }) {
     try {
       await apiFetch(`/iptu/operators/${id}`, { method: 'DELETE' });
       showToast('Operador excluído com sucesso.', 'info');
-      loadAllData();
+      loadAllData(selectedProvaId);
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -153,20 +210,27 @@ export default function IptuAdminView({ showToast }) {
 
   const handleGenerateToken = async (id) => {
     try {
-      const res = await apiFetch(`/iptu/operators/${id}/generate-token`, { method: 'POST' });
+      const res = await apiFetch(`/iptu/operators/${id}/generate-token`, {
+        method: 'POST',
+        body: JSON.stringify({ provaId: selectedProvaId })
+      });
       showToast(`Novo token gerado: ${res.token}`, 'success');
-      loadAllData();
+      loadAllData(selectedProvaId);
     } catch (err) {
       showToast(err.message, 'error');
     }
   };
 
   const handleGenerateAllTokens = async () => {
-    if (!window.confirm('Deseja gerar novos tokens para TODOS os operadores cadastrados?')) return;
+    const secName = currentSecretaria.secretaria || 'esta secretaria';
+    if (!window.confirm(`Deseja gerar novos tokens para TODOS os operadores na prova de ${secName}?`)) return;
     try {
-      const res = await apiFetch('/iptu/operators/generate-all-tokens', { method: 'POST' });
-      showToast(`${res.generatedCount} tokens gerados com sucesso!`, 'success');
-      loadAllData();
+      const res = await apiFetch('/iptu/operators/generate-all-tokens', {
+        method: 'POST',
+        body: JSON.stringify({ provaId: selectedProvaId })
+      });
+      showToast(`${res.generatedCount} tokens gerados com sucesso para ${secName}!`, 'success');
+      loadAllData(selectedProvaId);
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -180,7 +244,7 @@ export default function IptuAdminView({ showToast }) {
         body: JSON.stringify({ token })
       });
       showToast('Token invalidado com sucesso.', 'info');
-      loadAllData();
+      loadAllData(selectedProvaId);
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -189,9 +253,12 @@ export default function IptuAdminView({ showToast }) {
   const handleAllowRetry = async (id) => {
     if (!window.confirm('Deseja liberar uma NOVA TENTATIVA para este operador? A tentativa anterior será mantida no histórico.')) return;
     try {
-      const res = await apiFetch(`/iptu/operators/${id}/retry`, { method: 'POST' });
+      const res = await apiFetch(`/iptu/operators/${id}/retry`, {
+        method: 'POST',
+        body: JSON.stringify({ provaId: selectedProvaId })
+      });
       showToast(`Nova tentativa liberada! Token: ${res.token}`, 'success');
-      loadAllData();
+      loadAllData(selectedProvaId);
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -199,9 +266,9 @@ export default function IptuAdminView({ showToast }) {
 
   const handleCopyLink = (token) => {
     if (!token) return;
-    const url = `${window.location.origin}/prova-iptu/${token}`;
+    const url = `${window.location.origin}/prova/${token}`;
     navigator.clipboard.writeText(url);
-    showToast('Link da prova copiado para a área de transferência!', 'success');
+    showToast('Link individual da prova copiado para a área de transferência!', 'success');
   };
 
   const handleImportSubmit = async (e) => {
@@ -219,11 +286,74 @@ export default function IptuAdminView({ showToast }) {
       const res = await apiUpload('/iptu/operators/import', formData);
       setImportResult(res);
       showToast(`Importação concluída: ${res.importedCount} importados, ${res.duplicateCount} duplicados.`, 'success');
-      loadAllData();
+      loadAllData(selectedProvaId);
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
       setImportLoading(false);
+    }
+  };
+
+  // Question Import Submit (Excel or PDF)
+  const handleQuestionImportSubmit = async (e) => {
+    e.preventDefault();
+    if (!questionFile) {
+      showToast('Selecione um arquivo Excel (.xlsx, .xls) ou PDF (.pdf) com as questões.', 'warning');
+      return;
+    }
+
+    setQuestionImportLoading(true);
+    setQuestionImportResult(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', questionFile);
+      formData.append('autoGenerateTokens', autoGenTokens);
+      formData.append('replace', replaceQuestions);
+
+      const res = await apiUpload(`/iptu/provas/${selectedProvaId}/import-questions`, formData);
+      setQuestionImportResult(res);
+      showToast(res.message || 'Questões importadas com sucesso!', 'success');
+      loadAllData(selectedProvaId);
+    } catch (err) {
+      showToast(err.message || 'Erro ao importar questões.', 'error');
+    } finally {
+      setQuestionImportLoading(false);
+    }
+  };
+
+  // New Secretaria / Prova Submit
+  const handleCreateSecretaria = async (e) => {
+    e.preventDefault();
+    if (!newSecretariaForm.secretaria || !newSecretariaForm.secretaria.trim()) {
+      showToast('O nome da secretaria é obrigatório.', 'warning');
+      return;
+    }
+
+    try {
+      const payload = {
+        ...newSecretariaForm,
+        nome_prova:
+          newSecretariaForm.nome_prova.trim() ||
+          `Avaliação de Conhecimentos — ${newSecretariaForm.secretaria.trim()}`
+      };
+      const res = await apiFetch('/iptu/provas', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      showToast('Nova Secretaria / Prova cadastrada com sucesso!', 'success');
+      setShowNewSecretariaModal(false);
+      setNewSecretariaForm({
+        secretaria: '',
+        nome_prova: '',
+        nota_minima_aprovacao: 70,
+        tempo_maximo_minutos: 30
+      });
+      await loadProvasList();
+      if (res.prova && res.prova.id) {
+        setSelectedProvaId(res.prova.id);
+      }
+    } catch (err) {
+      showToast(err.message || 'Erro ao criar secretaria.', 'error');
     }
   };
 
@@ -246,17 +376,22 @@ export default function IptuAdminView({ showToast }) {
     try {
       await apiFetch('/iptu/settings', {
         method: 'PUT',
-        body: JSON.stringify(settings)
+        body: JSON.stringify({ ...settings, id: selectedProvaId })
       });
-      showToast('Configurações da Prova IPTU salvas com sucesso!', 'success');
-      loadAllData();
+      showToast('Configurações da avaliação salvas com sucesso!', 'success');
+      loadAllData(selectedProvaId);
+      loadProvasList();
     } catch (err) {
       showToast(err.message, 'error');
     }
   };
 
   const handleExportExcel = () => {
-    window.open('/api/iptu/export/results', '_blank');
+    window.open(`/api/iptu/export/results?provaId=${selectedProvaId}`, '_blank');
+  };
+
+  const handleDownloadTemplate = () => {
+    window.open('/api/iptu/template/questions', '_blank');
   };
 
   const filteredOperators = operators.filter((op) => {
@@ -288,38 +423,104 @@ export default function IptuAdminView({ showToast }) {
 
   return (
     <div className="space-y-6">
-      {/* Module Title Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-md">
+      {/* Top Banner: Secretaria & Prova Header */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-md">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-2xl flex items-center justify-center font-bold">
+          <div className="w-12 h-12 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-2xl flex items-center justify-center font-bold shrink-0">
             <FileCheck className="w-6 h-6" />
           </div>
           <div>
             <div className="text-[11px] font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-2">
-              <span>MÓDULO DE AVALIAÇÃO</span>
-              <span className="bg-amber-500/20 text-amber-300 text-[10px] px-2 py-0.5 rounded-full border border-amber-500/30">
+              <span>MÓDULO DE AVALIAÇÕES MULTI-SECRETARIAS</span>
+              <span className="bg-amber-500/20 text-amber-300 text-[10px] px-2 py-0.5 rounded-full border border-amber-500/30 font-mono">
                 156+POA
               </span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-white">Prova IPTU & TCL — Supervisão</h1>
+            <h1 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
+              <span>{settings.nome_prova || `Avaliação — ${currentSecretaria.secretaria}`}</span>
+            </h1>
           </div>
         </div>
 
         {/* Global Action Bar */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={loadAllData}
+            onClick={() => loadAllData(selectedProvaId)}
             className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition border border-slate-700 cursor-pointer"
             title="Atualizar Dados"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
+
+          <button
+            onClick={() => {
+              setQuestionFile(null);
+              setQuestionImportResult(null);
+              setShowQuestionImportModal(true);
+            }}
+            className="px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-extrabold rounded-xl flex items-center gap-2 transition shadow-md shadow-amber-500/20 cursor-pointer"
+          >
+            <Upload className="w-4 h-4" />
+            <span>Importar Prova (Excel / PDF)</span>
+          </button>
+
           <button
             onClick={handleExportExcel}
-            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition shadow-md shadow-emerald-600/20 cursor-pointer"
+            className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition shadow-md shadow-emerald-600/20 cursor-pointer"
           >
             <Download className="w-4 h-4" />
-            <span>Exportar Excel</span>
+            <span>Exportar Resultados</span>
+          </button>
+
+          <button
+            onClick={() => setShowNewSecretariaModal(true)}
+            className="px-3.5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition shadow-md shadow-purple-600/20 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>+ Nova Secretaria</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Secretaria Selector Tabs / Carousel */}
+      <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl shadow-sm">
+        <div className="flex items-center justify-between mb-2 px-1">
+          <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <Building2 className="w-3.5 h-3.5 text-amber-400" />
+            <span>Selecione a Secretaria / Prova Ativa:</span>
+          </span>
+          <span className="text-[11px] text-slate-500">
+            {provasList.length} secretarias configuradas
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
+          {provasList.map((p) => {
+            const isSelected = Number(selectedProvaId) === Number(p.id);
+            return (
+              <button
+                key={p.id}
+                onClick={() => setSelectedProvaId(p.id)}
+                className={`px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-2 shrink-0 transition cursor-pointer border ${
+                  isSelected
+                    ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-500/20'
+                    : 'bg-slate-950/80 text-slate-300 hover:bg-slate-800 hover:text-white border-slate-800'
+                }`}
+              >
+                <span>{p.secretaria}</span>
+                {isSelected && (
+                  <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse" />
+                )}
+              </button>
+            );
+          })}
+
+          <button
+            onClick={() => setShowNewSecretariaModal(true)}
+            className="px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-white border border-dashed border-slate-700 transition cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Outra Secretaria</span>
           </button>
         </div>
       </div>
@@ -329,6 +530,7 @@ export default function IptuAdminView({ showToast }) {
         {[
           { id: 'dashboard', label: 'Dashboard & Métricas', icon: BarChart3 },
           { id: 'operadores', label: 'Operadores & Tokens', icon: Users, badge: operators.length },
+          { id: 'questoes', label: 'Banco de Questões', icon: BookOpen, badge: questions.length },
           { id: 'resultados', label: 'Resultados & Correção', icon: CheckCircle2, badge: results.length },
           { id: 'desempenho', label: 'Desempenho por Questão', icon: TrendingUp },
           { id: 'configuracoes', label: 'Configurações', icon: Sliders }
@@ -348,9 +550,11 @@ export default function IptuAdminView({ showToast }) {
               <Icon className="w-4 h-4" />
               <span>{tab.label}</span>
               {tab.badge !== undefined && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                  isActive ? 'bg-slate-950 text-amber-400 font-black' : 'bg-slate-800 text-slate-300'
-                }`}>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                    isActive ? 'bg-slate-950 text-amber-400 font-black' : 'bg-slate-800 text-slate-300'
+                  }`}
+                >
                   {tab.badge}
                 </span>
               )}
@@ -411,7 +615,7 @@ export default function IptuAdminView({ showToast }) {
             <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between">
               <div>
                 <h3 className="text-sm font-extrabold text-white mb-1">Status de Realização</h3>
-                <p className="text-xs text-slate-400 mb-4">Distribuição do progresso dos operadores</p>
+                <p className="text-xs text-slate-400 mb-4">Distribuição do progresso em {currentSecretaria.secretaria}</p>
               </div>
 
               <div className="h-60 w-full">
@@ -431,7 +635,15 @@ export default function IptuAdminView({ showToast }) {
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: '#fff', fontSize: '12px' }} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#0f172a',
+                        borderColor: '#1e293b',
+                        borderRadius: '12px',
+                        color: '#fff',
+                        fontSize: '12px'
+                      }}
+                    />
                     <Legend wrapperStyle={{ fontSize: '11px', color: '#94a3b8' }} />
                   </PieChart>
                 </ResponsiveContainer>
@@ -447,33 +659,41 @@ export default function IptuAdminView({ showToast }) {
             <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl lg:col-span-2 flex flex-col justify-between">
               <div>
                 <h3 className="text-sm font-extrabold text-white mb-1">Aproveitamento por Dificuldade</h3>
-                <p className="text-xs text-slate-400 mb-4">Desempenho dos operadores dividido nos níveis Fácil, Médio e Difícil</p>
+                <p className="text-xs text-slate-400 mb-4">
+                  Desempenho dos operadores nos níveis Fácil, Médio e Difícil
+                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-                {difficultyStats && Object.keys(difficultyStats).map((k) => {
-                  const item = difficultyStats[k];
-                  const colorClass = k === 'facil' ? 'emerald' : k === 'medio' ? 'amber' : 'rose';
-                  return (
-                    <div key={k} className={`bg-slate-950/80 border border-${colorClass}-500/30 p-4 rounded-2xl flex flex-col justify-between`}>
-                      <div>
-                        <span className={`text-[10px] font-extrabold uppercase tracking-wider text-${colorClass}-400`}>
-                          {item.nome}
-                        </span>
-                        <div className="text-2xl font-black text-white mt-1">{item.percentual.toFixed(1)}%</div>
+                {difficultyStats &&
+                  Object.keys(difficultyStats).map((k) => {
+                    const item = difficultyStats[k];
+                    const colorClass = k === 'facil' ? 'emerald' : k === 'medio' ? 'amber' : 'rose';
+                    return (
+                      <div
+                        key={k}
+                        className={`bg-slate-950/80 border border-${colorClass}-500/30 p-4 rounded-2xl flex flex-col justify-between`}
+                      >
+                        <div>
+                          <span className={`text-[10px] font-extrabold uppercase tracking-wider text-${colorClass}-400`}>
+                            {item.nome}
+                          </span>
+                          <div className="text-2xl font-black text-white mt-1">{item.percentual.toFixed(1)}%</div>
+                        </div>
+                        <div className="mt-3 text-[11px] text-slate-400">
+                          {item.acertos} acertos de {item.totalRespostas} respostas
+                        </div>
                       </div>
-                      <div className="mt-3 text-[11px] text-slate-400">
-                        {item.acertos} acertos de {item.totalRespostas} respostas
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
               </div>
 
-              <div className="bg-slate-950 border border-slate-800/80 p-4 rounded-2xl text-xs text-slate-300 flex items-center justify-between">
+              <div className="bg-slate-950 border border-slate-800/80 p-4 rounded-2xl text-xs text-slate-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-amber-400 font-bold">Critério Oficial de Aprovação:</span>
-                  <span>Nota mínima de <strong>{settings.nota_minima_aprovacao}% (14 acertos de 20)</strong></span>
+                  <span className="text-amber-400 font-bold">Critério de Aprovação:</span>
+                  <span>
+                    Nota mínima de <strong>{settings.nota_minima_aprovacao}%</strong> ({Math.ceil(((settings.nota_minima_aprovacao || 70) / 100) * (questions.length || 20))} acertos de {questions.length || 20})
+                  </span>
                 </div>
                 <button
                   onClick={() => setActiveTab('configuracoes')}
@@ -517,7 +737,7 @@ export default function IptuAdminView({ showToast }) {
               </select>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => {
                   setEditingOp(null);
@@ -539,13 +759,13 @@ export default function IptuAdminView({ showToast }) {
                 className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl flex items-center gap-2 transition border border-slate-700 cursor-pointer"
               >
                 <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-                <span>Importar Excel / CSV</span>
+                <span>Importar Operadores</span>
               </button>
 
               <button
                 onClick={handleGenerateAllTokens}
                 className="px-3.5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl flex items-center gap-2 transition cursor-pointer shadow-md shadow-purple-600/20"
-                title="Gera novos tokens únicos para todos os operadores"
+                title={`Gera tokens para todos os operadores na prova de ${currentSecretaria.secretaria}`}
               >
                 <RotateCcw className="w-4 h-4" />
                 <span>Gerar Tokens em Massa</span>
@@ -561,10 +781,10 @@ export default function IptuAdminView({ showToast }) {
                   <tr>
                     <th className="p-4 font-bold">Operador</th>
                     <th className="p-4 font-bold">Matrícula</th>
-                    <th className="p-4 font-bold">Token Individual</th>
-                    <th className="p-4 font-bold">Status da Prova</th>
+                    <th className="p-4 font-bold">Token da Prova</th>
+                    <th className="p-4 font-bold">Status</th>
                     <th className="p-4 font-bold text-center">Nota</th>
-                    <th className="p-4 font-bold text-center">Aproveitamento</th>
+                    <th className="p-4 font-bold text-center">% Acerto</th>
                     <th className="p-4 font-bold text-center">Resultado</th>
                     <th className="p-4 font-bold text-right">Ações</th>
                   </tr>
@@ -578,8 +798,9 @@ export default function IptuAdminView({ showToast }) {
                     </tr>
                   ) : (
                     filteredOperators.map((op) => {
-                      const isCompleted = op.tentativa_status === 'concluida' || op.tentativa_status === 'expirada_tempo';
-                      const isApproved = op.resultado === 'aprovado';
+                      const isCompleted =
+                        op.tentativa_status === 'concluida' || op.tentativa_status === 'expirada_tempo';
+                        const isApproved = op.resultado === 'aprovado';
 
                       return (
                         <tr key={op.id} className="hover:bg-slate-800/40 transition">
@@ -595,11 +816,13 @@ export default function IptuAdminView({ showToast }) {
                           <td className="p-4 font-mono">
                             {op.token ? (
                               <div className="flex items-center gap-2">
-                                <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                                  op.token_status === 'ativo'
-                                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                                    : 'bg-slate-800 text-slate-400'
-                                }`}>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                                    op.token_status === 'ativo'
+                                      ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                      : 'bg-slate-800 text-slate-400'
+                                  }`}
+                                >
                                   {op.token}
                                 </span>
                                 <button
@@ -610,11 +833,11 @@ export default function IptuAdminView({ showToast }) {
                                   <Copy className="w-3.5 h-3.5" />
                                 </button>
                                 <a
-                                  href={`/prova-iptu/${op.token}`}
+                                  href={`/prova/${op.token}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="p-1 hover:text-amber-300 text-slate-400 transition"
-                                  title="Abrir Link da Prova"
+                                  title="Abrir Prova do Operador"
                                 >
                                   <ExternalLink className="w-3.5 h-3.5" />
                                 </a>
@@ -652,11 +875,13 @@ export default function IptuAdminView({ showToast }) {
 
                           <td className="p-4 text-center">
                             {op.resultado ? (
-                              <span className={`text-[11px] font-black px-2.5 py-1 rounded-full border ${
-                                isApproved
-                                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                                  : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                              }`}>
+                              <span
+                                className={`text-[11px] font-black px-2.5 py-1 rounded-full border ${
+                                  isApproved
+                                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                                    : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                                }`}
+                              >
                                 {isApproved ? 'APROVADO' : 'REPROVADO'}
                               </span>
                             ) : (
@@ -726,16 +951,169 @@ export default function IptuAdminView({ showToast }) {
         </div>
       )}
 
-      {/* 3. ABA RESULTADOS & CORREÇÃO DETALHADA */}
+      {/* 3. ABA BANCO DE QUESTÕES (NOVA!) */}
+      {activeTab === 'questoes' && (
+        <div className="space-y-4">
+          {/* Action Bar */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+            <div>
+              <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                <span>Questões Cadastradas</span>
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  {questions.length} questões
+                </span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                Secretaria selecionada: <strong>{currentSecretaria.secretaria}</strong>
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleDownloadTemplate}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl flex items-center gap-2 transition border border-slate-700 cursor-pointer"
+              >
+                <Download className="w-4 h-4 text-sky-400" />
+                <span>Baixar Modelo Excel</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setQuestionFile(null);
+                  setQuestionImportResult(null);
+                  setShowQuestionImportModal(true);
+                }}
+                className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold rounded-xl flex items-center gap-2 transition shadow-md shadow-amber-500/20 cursor-pointer"
+              >
+                <Upload className="w-4 h-4" />
+                <span>Importar Questões (Excel / PDF)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Questions List */}
+          {questions.length === 0 ? (
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-12 text-center max-w-2xl mx-auto my-8">
+              <div className="w-16 h-16 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-3xl flex items-center justify-center mx-auto mb-4">
+                <BookOpen className="w-8 h-8" />
+              </div>
+              <h4 className="text-base font-extrabold text-white mb-2">
+                Nenhuma questão cadastrada para {currentSecretaria.secretaria}
+              </h4>
+              <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+                Você pode importar um arquivo <strong>Excel (.xlsx, .xls)</strong> ou <strong>PDF (.pdf)</strong> contendo o enunciado, as alternativas (A a E) e o gabarito. O sistema criará as questões automaticamente e poderá gerar os tokens individuais para os operadores.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  onClick={handleDownloadTemplate}
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition flex items-center gap-2 cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-sky-400" />
+                  <span>Baixar Modelo Excel (.xlsx)</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setQuestionFile(null);
+                    setQuestionImportResult(null);
+                    setShowQuestionImportModal(true);
+                  }}
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold rounded-xl transition shadow-md shadow-amber-500/20 flex items-center gap-2 cursor-pointer"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Importar Agora (Excel / PDF)</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {questions.map((q) => (
+                <div
+                  key={q.id || q.numero}
+                  className="bg-slate-900 border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition space-y-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/30 text-amber-300 font-black text-xs flex items-center justify-center">
+                        #{q.numero}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          q.dificuldade === 'facil'
+                            ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                            : q.dificuldade === 'medio'
+                              ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                              : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                        }`}
+                      >
+                        {(q.dificuldade || 'médio').toUpperCase()}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-400">Gabarito Oficial:</span>
+                      <span className="text-xs font-black px-2.5 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                        Alternativa {q.gabarito}
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="text-xs sm:text-sm font-bold text-white leading-relaxed">{q.enunciado}</p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+                    {['A', 'B', 'C', 'D', 'E'].map((letra) => {
+                      const text = q[`alternativa_${letra.toLowerCase()}`];
+                      if (!text) return null;
+                      const isCorrect = q.gabarito === letra;
+                      return (
+                        <div
+                          key={letra}
+                          className={`p-2.5 rounded-xl border text-xs flex items-start gap-2.5 ${
+                            isCorrect
+                              ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
+                              : 'bg-slate-950/60 border-slate-800 text-slate-300'
+                          }`}
+                        >
+                          <span
+                            className={`w-5 h-5 rounded-md flex items-center justify-center font-black text-[11px] shrink-0 ${
+                              isCorrect
+                                ? 'bg-emerald-500 text-slate-950 font-extrabold'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {letra}
+                          </span>
+                          <span className="leading-snug flex-1">{text}</span>
+                          {isCorrect && (
+                            <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {q.justificativa && (
+                    <div className="p-3 bg-slate-950/80 border border-slate-800/80 rounded-xl text-xs text-slate-400">
+                      <span className="font-bold text-amber-400 block mb-0.5">Fundamentação:</span>
+                      <span>{q.justificativa}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 4. ABA RESULTADOS & CORREÇÃO DETALHADA */}
       {activeTab === 'resultados' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between bg-slate-900 border border-slate-800 p-4 rounded-2xl">
             <div className="text-xs text-slate-300">
-              Total de avaliações realizadas: <strong>{results.length}</strong>
+              Total de avaliações realizadas para {currentSecretaria.secretaria}: <strong>{results.length}</strong>
             </div>
             <button
               onClick={handleExportExcel}
-              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl flex items-center gap-2 transition"
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl flex items-center gap-2 transition cursor-pointer"
             >
               <Download className="w-4 h-4" />
               <span>Exportar Resultados (Excel)</span>
@@ -763,7 +1141,7 @@ export default function IptuAdminView({ showToast }) {
                   {results.length === 0 ? (
                     <tr>
                       <td colSpan="10" className="p-8 text-center text-slate-500">
-                        Nenhuma prova concluída ainda.
+                        Nenhuma prova concluída ainda para esta secretaria.
                       </td>
                     </tr>
                   ) : (
@@ -783,11 +1161,13 @@ export default function IptuAdminView({ showToast }) {
                           <td className="p-4 text-center text-emerald-400 font-bold">{r.acertos}</td>
                           <td className="p-4 text-center text-rose-400 font-bold">{r.erros}</td>
                           <td className="p-4 text-center">
-                            <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border ${
-                              isApproved
-                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                                : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                            }`}>
+                            <span
+                              className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border ${
+                                isApproved
+                                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                                  : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                              }`}
+                            >
                               {isApproved ? 'APROVADO' : 'REPROVADO'}
                             </span>
                           </td>
@@ -814,33 +1194,43 @@ export default function IptuAdminView({ showToast }) {
         </div>
       )}
 
-      {/* 4. ABA DESEMPENHO POR QUESTÃO & DIFICULDADE */}
+      {/* 5. ABA DESEMPENHO POR QUESTÃO & DIFICULDADE */}
       {activeTab === 'desempenho' && (
         <div className="space-y-6">
           {/* Difficulty Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {difficultyStats && Object.keys(difficultyStats).map((k) => {
-              const diff = difficultyStats[k];
-              return (
-                <div key={k} className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between">
-                  <div>
-                    <div className="text-xs font-extrabold uppercase text-amber-400 mb-1">{diff.nome}</div>
-                    <div className="text-3xl font-black text-white">{diff.percentual.toFixed(1)}%</div>
-                    <div className="text-xs text-slate-400 mt-1">Taxa de Acerto Geral</div>
+            {difficultyStats &&
+              Object.keys(difficultyStats).map((k) => {
+                const diff = difficultyStats[k];
+                return (
+                  <div
+                    key={k}
+                    className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="text-xs font-extrabold uppercase text-amber-400 mb-1">{diff.nome}</div>
+                      <div className="text-3xl font-black text-white">{diff.percentual.toFixed(1)}%</div>
+                      <div className="text-xs text-slate-400 mt-1">Taxa de Acerto Geral</div>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-slate-800/80 text-xs text-slate-300 flex justify-between">
+                      <span>
+                        Acertos: <strong>{diff.acertos}</strong>
+                      </span>
+                      <span>
+                        Total Respostas: <strong>{diff.totalRespostas}</strong>
+                      </span>
+                    </div>
                   </div>
-                  <div className="mt-4 pt-3 border-t border-slate-800/80 text-xs text-slate-300 flex justify-between">
-                    <span>Acertos: <strong>{diff.acertos}</strong></span>
-                    <span>Total Respostas: <strong>{diff.totalRespostas}</strong></span>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
 
           {/* Ranking of Questions with Highest Error Rates */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg">
             <h3 className="text-sm font-extrabold text-white mb-1">Ranking de Questões com Maior Índice de Erro</h3>
-            <p className="text-xs text-slate-400 mb-4">Utilize estes dados para orientar treinamentos e reciclagens no 156+POA</p>
+            <p className="text-xs text-slate-400 mb-4">
+              Utilize estes dados para orientar treinamentos específicos em {currentSecretaria.secretaria}
+            </p>
 
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-300">
@@ -857,32 +1247,46 @@ export default function IptuAdminView({ showToast }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {questionsStats?.rankingErros?.map((q) => (
-                    <tr key={q.numero} className="hover:bg-slate-800/40 transition">
-                      <td className="p-3 text-center font-black text-amber-400">{q.numero}</td>
-                      <td className="p-3">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                          q.dificuldade === 'facil'
-                            ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                            : q.dificuldade === 'medio'
-                              ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                              : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
-                        }`}>
-                          {q.dificuldade.toUpperCase()}
-                        </span>
-                      </td>
-                      <td className="p-3 max-w-md truncate text-slate-200">{q.enunciado}</td>
-                      <td className="p-3 text-center font-bold text-emerald-400">{q.gabarito}</td>
-                      <td className="p-3 text-center">{q.total_respostas}</td>
-                      <td className="p-3 text-center text-emerald-400 font-bold">{q.acertos}</td>
-                      <td className="p-3 text-center text-rose-400 font-bold">{q.erros}</td>
-                      <td className="p-3 text-center">
-                        <span className={`text-xs font-black ${q.percentual_erro > 40 ? 'text-rose-400' : 'text-slate-300'}`}>
-                          {q.percentual_erro.toFixed(1)}%
-                        </span>
+                  {!questionsStats?.rankingErros || questionsStats.rankingErros.length === 0 ? (
+                    <tr>
+                      <td colSpan="8" className="p-6 text-center text-slate-500">
+                        Nenhum dado de erro registrado para esta avaliação.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    questionsStats.rankingErros.map((q) => (
+                      <tr key={q.numero} className="hover:bg-slate-800/40 transition">
+                        <td className="p-3 text-center font-black text-amber-400">{q.numero}</td>
+                        <td className="p-3">
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                              q.dificuldade === 'facil'
+                                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                                : q.dificuldade === 'medio'
+                                  ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                                  : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                            }`}
+                          >
+                            {(q.dificuldade || 'médio').toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="p-3 max-w-md truncate text-slate-200">{q.enunciado}</td>
+                        <td className="p-3 text-center font-bold text-emerald-400">{q.gabarito}</td>
+                        <td className="p-3 text-center">{q.total_respostas}</td>
+                        <td className="p-3 text-center text-emerald-400 font-bold">{q.acertos}</td>
+                        <td className="p-3 text-center text-rose-400 font-bold">{q.erros}</td>
+                        <td className="p-3 text-center">
+                          <span
+                            className={`text-xs font-black ${
+                              q.percentual_erro > 40 ? 'text-rose-400' : 'text-slate-300'
+                            }`}
+                          >
+                            {q.percentual_erro.toFixed(1)}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -890,18 +1294,32 @@ export default function IptuAdminView({ showToast }) {
         </div>
       )}
 
-      {/* 5. ABA CONFIGURAÇÕES */}
+      {/* 6. ABA CONFIGURAÇÕES */}
       {activeTab === 'configuracoes' && (
         <div className="max-w-3xl bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-          <h3 className="text-base font-extrabold text-white mb-2">Configurações Gerais da Prova IPTU</h3>
-          <p className="text-xs text-slate-400 mb-6">Ajuste os parâmetros de aplicação, aprovação e cronômetro</p>
+          <h3 className="text-base font-extrabold text-white mb-1">
+            Configurações da Avaliação — {currentSecretaria.secretaria}
+          </h3>
+          <p className="text-xs text-slate-400 mb-6">
+            Ajuste os parâmetros de aplicação, aprovação e cronômetro específicos desta prova
+          </p>
 
           <form onSubmit={handleSaveSettings} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1.5">Nome da Avaliação</label>
+              <label className="block text-xs font-bold text-slate-300 mb-1.5">Secretaria / Órgão</label>
               <input
                 type="text"
-                value={settings.nome_prova}
+                value={settings.secretaria || ''}
+                onChange={(e) => setSettings({ ...settings, secretaria: e.target.value })}
+                className="w-full bg-slate-950 border border-slate-800 text-xs text-white p-3 rounded-xl focus:border-amber-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1.5">Nome / Título da Avaliação</label>
+              <input
+                type="text"
+                value={settings.nome_prova || ''}
                 onChange={(e) => setSettings({ ...settings, nome_prova: e.target.value })}
                 className="w-full bg-slate-950 border border-slate-800 text-xs text-white p-3 rounded-xl focus:border-amber-400 outline-none"
               />
@@ -920,7 +1338,7 @@ export default function IptuAdminView({ showToast }) {
                   onChange={(e) => setSettings({ ...settings, nota_minima_aprovacao: Number(e.target.value) })}
                   className="w-full bg-slate-950 border border-slate-800 text-xs text-white p-3 rounded-xl focus:border-amber-400 outline-none"
                 />
-                <span className="text-[11px] text-slate-500 mt-1 block">Padrão: 70% (14 acertos de 20)</span>
+                <span className="text-[11px] text-slate-500 mt-1 block">Padrão: 70%</span>
               </div>
 
               <div>
@@ -973,7 +1391,7 @@ export default function IptuAdminView({ showToast }) {
               {editingOp ? 'Editar Operador' : 'Cadastrar Operador na Prova'}
             </h3>
             <p className="text-xs text-slate-400 mb-5">
-              Informe os dados do operador para gerar o link individual de acesso.
+              Informe os dados do operador para gerar o link individual de acesso à prova de {currentSecretaria.secretaria}.
             </p>
 
             <form onSubmit={handleSaveOperator} className="space-y-4">
@@ -1004,7 +1422,7 @@ export default function IptuAdminView({ showToast }) {
                 <button
                   type="button"
                   onClick={() => setShowOpModal(false)}
-                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-3 rounded-xl transition"
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-3 rounded-xl transition cursor-pointer"
                 >
                   Cancelar
                 </button>
@@ -1020,11 +1438,11 @@ export default function IptuAdminView({ showToast }) {
         </div>
       )}
 
-      {/* MODAL: IMPORTAÇÃO DE PLANILHA EXCEL / CSV */}
+      {/* MODAL: IMPORTAÇÃO DE OPERADORES (EXCEL / CSV) */}
       {showImportModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="max-w-lg w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl">
-            <h3 className="text-base font-extrabold text-white mb-1">Importar Operadores da Prova</h3>
+            <h3 className="text-base font-extrabold text-white mb-1">Importar Operadores em Massa</h3>
             <p className="text-xs text-slate-400 mb-4">
               Envie uma planilha <strong>.xlsx</strong> ou <strong>.csv</strong> contendo as colunas <strong>Nome</strong> e <strong>Matrícula</strong>.
             </p>
@@ -1041,10 +1459,10 @@ export default function IptuAdminView({ showToast }) {
                 <label htmlFor="file-import-input" className="cursor-pointer block">
                   <Upload className="w-8 h-8 text-amber-400 mx-auto mb-2" />
                   <span className="text-xs font-bold text-white block">
-                    {importFile ? importFile.name : 'Clique para selecionar o arquivo (.xlsx ou .csv)'}
+                    {importFile ? importFile.name : 'Clique para selecionar a planilha (.xlsx ou .csv)'}
                   </span>
                   <span className="text-[11px] text-slate-500 mt-1 block">
-                    Formato aceito: Nome / Nome Completo &bull; Matrícula / Matricula
+                    Colunas aceitas: Nome / Nome Completo &bull; Matrícula / Matricula
                   </span>
                 </label>
               </div>
@@ -1063,7 +1481,7 @@ export default function IptuAdminView({ showToast }) {
                 <button
                   type="button"
                   onClick={() => setShowImportModal(false)}
-                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-3 rounded-xl transition"
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-3 rounded-xl transition cursor-pointer"
                 >
                   Fechar
                 </button>
@@ -1081,16 +1499,230 @@ export default function IptuAdminView({ showToast }) {
         </div>
       )}
 
-      {/* MODAL: CORREÇÃO DETALHADA ADMINISTRATIVA (20 QUESTÕES COM JUSTIFICATIVA) */}
+      {/* MODAL: IMPORTAR QUESTÕES (EXCEL OU PDF) + AUTO GERAR TOKENS */}
+      {showQuestionImportModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="max-w-xl w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">
+                  Importador Automático de Questões
+                </span>
+                <h3 className="text-base font-extrabold text-white">
+                  {currentSecretaria.secretaria}
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowQuestionImportModal(false)}
+                className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+              Carregue o arquivo contendo as questões da prova em <strong>Excel (.xlsx, .xls)</strong> ou <strong>PDF (.pdf)</strong>. O sistema identifica enunciados, alternativas (A a E) e o gabarito.
+            </p>
+
+            <form onSubmit={handleQuestionImportSubmit} className="space-y-4">
+              <div className="border-2 border-dashed border-slate-800 hover:border-amber-500/50 rounded-2xl p-6 text-center cursor-pointer transition">
+                <input
+                  type="file"
+                  accept=".xlsx, .xls, .pdf"
+                  onChange={(e) => setQuestionFile(e.target.files[0])}
+                  className="hidden"
+                  id="question-file-input"
+                />
+                <label htmlFor="question-file-input" className="cursor-pointer block">
+                  <BookOpen className="w-9 h-9 text-amber-400 mx-auto mb-2" />
+                  <span className="text-xs font-bold text-white block">
+                    {questionFile ? questionFile.name : 'Clique para selecionar o arquivo (Excel ou PDF)'}
+                  </span>
+                  <span className="text-[11px] text-slate-500 mt-1 block">
+                    Formatos suportados: .xlsx, .xls, .pdf (até 15MB)
+                  </span>
+                </label>
+              </div>
+
+              {/* Import Options */}
+              <div className="space-y-2.5 bg-slate-950/80 p-4 rounded-2xl border border-slate-800/80 text-xs">
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={autoGenTokens}
+                    onChange={(e) => setAutoGenTokens(e.target.checked)}
+                    className="w-4 h-4 rounded text-amber-500 bg-slate-900 border-slate-700"
+                  />
+                  <span className="font-bold text-slate-200">
+                    Gerar tokens de acesso para todos os operadores imediatamente após importar
+                  </span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={replaceQuestions}
+                    onChange={(e) => setReplaceQuestions(e.target.checked)}
+                    className="w-4 h-4 rounded text-amber-500 bg-slate-900 border-slate-700"
+                  />
+                  <span className="text-slate-400">
+                    Substituir questões existentes desta secretaria (caso já existam)
+                  </span>
+                </label>
+              </div>
+
+              {questionImportResult && (
+                <div className="bg-slate-950 border border-emerald-500/30 rounded-2xl p-3.5 text-xs space-y-1">
+                  <div className="text-emerald-400 font-bold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>{questionImportResult.message}</span>
+                  </div>
+                  {questionImportResult.tokensGenerated > 0 && (
+                    <div className="text-purple-300 text-[11px]">
+                      🎉 {questionImportResult.tokensGenerated} tokens gerados e prontos para distribuição.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowQuestionImportModal(false)}
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-3 rounded-xl transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={!questionFile || questionImportLoading}
+                  className="flex-1 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 text-xs font-black py-3 rounded-xl transition shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {questionImportLoading ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Upload className="w-4 h-4" />
+                  )}
+                  <span>{questionImportLoading ? 'Processando...' : 'Importar Questões'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: NOVA SECRETARIA / PROVA */}
+      {showNewSecretariaModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl">
+            <h3 className="text-base font-extrabold text-white mb-1">Cadastrar Nova Secretaria</h3>
+            <p className="text-xs text-slate-400 mb-5">
+              Crie um novo módulo de prova para qualquer secretaria municipal da Prefeitura.
+            </p>
+
+            <form onSubmit={handleCreateSecretaria} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  Nome da Secretaria / Órgão
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Fasc, SMAMS, SMACO..."
+                  value={newSecretariaForm.secretaria}
+                  onChange={(e) =>
+                    setNewSecretariaForm({ ...newSecretariaForm, secretaria: e.target.value })
+                  }
+                  className="w-full bg-slate-950 border border-slate-800 text-xs text-white p-3 rounded-xl focus:border-amber-400 outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  Título da Avaliação (Opcional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Avaliação de Conhecimentos — FASC"
+                  value={newSecretariaForm.nome_prova}
+                  onChange={(e) =>
+                    setNewSecretariaForm({ ...newSecretariaForm, nome_prova: e.target.value })
+                  }
+                  className="w-full bg-slate-950 border border-slate-800 text-xs text-white p-3 rounded-xl focus:border-amber-400 outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">Nota Mínima (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={newSecretariaForm.nota_minima_aprovacao}
+                    onChange={(e) =>
+                      setNewSecretariaForm({
+                        ...newSecretariaForm,
+                        nota_minima_aprovacao: Number(e.target.value)
+                      })
+                    }
+                    className="w-full bg-slate-950 border border-slate-800 text-xs text-white p-3 rounded-xl focus:border-amber-400 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">Tempo (minutos)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="180"
+                    value={newSecretariaForm.tempo_maximo_minutos}
+                    onChange={(e) =>
+                      setNewSecretariaForm({
+                        ...newSecretariaForm,
+                        tempo_maximo_minutos: Number(e.target.value)
+                      })
+                    }
+                    className="w-full bg-slate-950 border border-slate-800 text-xs text-white p-3 rounded-xl focus:border-amber-400 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowNewSecretariaModal(false)}
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-3 rounded-xl transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-purple-600 hover:bg-purple-500 text-white text-xs font-black py-3 rounded-xl transition shadow-md shadow-purple-600/20 cursor-pointer"
+                >
+                  Cadastrar Secretaria
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CORREÇÃO DETALHADA ADMINISTRATIVA */}
       {showCorrectionModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
           <div className="max-w-4xl w-full max-h-[90vh] bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col">
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-4 border-b border-slate-800 shrink-0">
               <div>
-                <div className="text-[10px] font-black uppercase tracking-wider text-amber-400">Correção Oficial Detalhada</div>
+                <div className="text-[10px] font-black uppercase tracking-wider text-amber-400">
+                  Correção Oficial Detalhada &bull; {currentSecretaria.secretaria}
+                </div>
                 <h3 className="text-lg font-black text-white">
-                  {correctionData?.attempt?.operador} &bull; <span className="text-amber-300 font-mono text-sm">Matrícula: {correctionData?.attempt?.matricula}</span>
+                  {correctionData?.attempt?.operador} &bull;{' '}
+                  <span className="text-amber-300 font-mono text-sm">
+                    Matrícula: {correctionData?.attempt?.matricula}
+                  </span>
                 </h3>
               </div>
               <button
@@ -1106,11 +1738,15 @@ export default function IptuAdminView({ showToast }) {
               <div className="my-4 p-4 bg-slate-950 border border-slate-800 rounded-2xl grid grid-cols-2 sm:grid-cols-5 gap-3 text-center shrink-0">
                 <div>
                   <div className="text-[10px] text-slate-400 font-semibold">Nota Final</div>
-                  <div className="text-xl font-black text-amber-400">{correctionData.attempt.nota?.toFixed(1)}</div>
+                  <div className="text-xl font-black text-amber-400">
+                    {correctionData.attempt.nota?.toFixed(1)}
+                  </div>
                 </div>
                 <div>
                   <div className="text-[10px] text-slate-400 font-semibold">Aproveitamento</div>
-                  <div className="text-xl font-black text-sky-400">{correctionData.attempt.percentual?.toFixed(0)}%</div>
+                  <div className="text-xl font-black text-sky-400">
+                    {correctionData.attempt.percentual?.toFixed(0)}%
+                  </div>
                 </div>
                 <div>
                   <div className="text-[10px] text-slate-400 font-semibold">Acertos</div>
@@ -1122,9 +1758,11 @@ export default function IptuAdminView({ showToast }) {
                 </div>
                 <div>
                   <div className="text-[10px] text-slate-400 font-semibold">Resultado</div>
-                  <div className={`text-sm font-black mt-1 ${
-                    correctionData.attempt.resultado === 'aprovado' ? 'text-emerald-400' : 'text-rose-400'
-                  }`}>
+                  <div
+                    className={`text-sm font-black mt-1 ${
+                      correctionData.attempt.resultado === 'aprovado' ? 'text-emerald-400' : 'text-rose-400'
+                    }`}
+                  >
                     {correctionData.attempt.resultado?.toUpperCase()}
                   </div>
                 </div>
@@ -1158,11 +1796,13 @@ export default function IptuAdminView({ showToast }) {
                         </span>
                       </div>
 
-                      <span className={`text-xs font-black px-3 py-0.5 rounded-full border ${
-                        q.is_correta
-                          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                          : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
-                      }`}>
+                      <span
+                        className={`text-xs font-black px-3 py-0.5 rounded-full border ${
+                          q.is_correta
+                            ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                            : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                        }`}
+                      >
                         {q.is_correta ? '🟢 CORRETA' : '🔴 INCORRETA'}
                       </span>
                     </div>
@@ -1186,10 +1826,12 @@ export default function IptuAdminView({ showToast }) {
                     </div>
 
                     {/* Official Justification */}
-                    <div className="p-3 bg-slate-950/80 border border-slate-800/80 rounded-xl text-xs text-slate-300">
-                      <span className="font-bold text-amber-400 block mb-1">Justificativa Oficial SMF / 156+POA:</span>
-                      <p className="text-slate-300 leading-relaxed">{q.justificativa}</p>
-                    </div>
+                    {q.justificativa && (
+                      <div className="p-3 bg-slate-950/80 border border-slate-800/80 rounded-xl text-xs text-slate-300">
+                        <span className="font-bold text-amber-400 block mb-1">Justificativa Oficial 156+POA:</span>
+                        <p className="text-slate-300 leading-relaxed">{q.justificativa}</p>
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -1198,7 +1840,7 @@ export default function IptuAdminView({ showToast }) {
             <div className="pt-4 border-t border-slate-800 shrink-0 flex justify-end">
               <button
                 onClick={() => setShowCorrectionModal(false)}
-                className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition"
+                className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition cursor-pointer"
               >
                 Fechar
               </button>

@@ -13,7 +13,11 @@ export default function Navbar({ user, campaign, onLogout, onNavigate, activeTab
         {campaign && (
           <div className="hidden md:flex items-center gap-2 bg-slate-900/60 border border-slate-700 px-3 py-1 rounded-full text-xs text-slate-300">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>01/09/2026 → 11/12/2026</span>
+            <span>
+              {campaign.start_date ? campaign.start_date.substring(0, 10).split('-').reverse().join('/') : '01/09/2026'}
+              {' → '}
+              {campaign.end_date ? campaign.end_date.substring(0, 10).split('-').reverse().join('/') : '11/12/2026'}
+            </span>
             <span className="text-slate-500">|</span>
             <span className={`font-bold ${campaign.isLocked ? 'text-rose-400' : 'text-emerald-400'}`}>
               {campaign.isLocked ? '🔒 Encerramento Concluído' : `${campaign.daysRemaining} dias restantes`}

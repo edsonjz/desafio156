@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Sliders, Edit2, Trash2, Plus, CheckCircle2, XCircle, AlertTriangle, Calendar, Award, X, Settings2 } from 'lucide-react';
 import { apiFetch } from '../services/api';
 
-export default function RulesView({ showToast }) {
+export default function RulesView({ showToast, onCampaignUpdate }) {
   const [rules, setRules] = useState([]);
   const [campaign, setCampaign] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -162,6 +162,7 @@ export default function RulesView({ showToast }) {
       showToast(res.message, 'success');
       setShowCampaignModal(false);
       loadAll();
+      if (onCampaignUpdate) onCampaignUpdate();
     } catch (err) {
       showToast(err.message, 'error');
     }

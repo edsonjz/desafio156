@@ -343,7 +343,11 @@ export default function SettingsView({ campaign, onCampaignUpdate, showToast, us
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Período:</span>
-                  <strong className="text-amber-400">01/09/2026 → 11/12/2026</strong>
+                  <strong className="text-amber-400">
+                    {campaign?.start_date ? campaign.start_date.substring(0, 10).split('-').reverse().join('/') : '01/09/2026'}
+                    {' → '}
+                    {campaign?.end_date ? campaign.end_date.substring(0, 10).split('-').reverse().join('/') : '11/12/2026'}
+                  </strong>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-slate-400">Status Atual:</span>

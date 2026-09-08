@@ -33,8 +33,13 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [campaign, setCampaign] = useState(null);
   const [publicExamToken, setPublicExamToken] = useState(() => {
-    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/prova-iptu/')) {
-      return window.location.pathname.replace('/prova-iptu/', '').trim();
+    if (typeof window !== 'undefined') {
+      if (window.location.pathname.startsWith('/prova-iptu/')) {
+        return window.location.pathname.replace('/prova-iptu/', '').trim();
+      }
+      if (window.location.pathname.startsWith('/prova/')) {
+        return window.location.pathname.replace('/prova/', '').trim();
+      }
     }
     return null;
   });
@@ -160,7 +165,7 @@ export default function App() {
             <DashboardView onNavigate={(tab) => setActiveTab(tab)} campaign={campaign} />
           )}
 
-          {activeTab === 'prova-iptu' && (
+          {(activeTab === 'provas' || activeTab === 'prova-iptu') && (
             <IptuAdminView showToast={showToast} />
           )}
 
@@ -238,7 +243,7 @@ export default function App() {
           )}
 
           {activeTab === 'regras' && (
-            <RulesView showToast={showToast} />
+            <RulesView showToast={showToast} onCampaignUpdate={loadCampaign} />
           )}
 
           {activeTab === 'auditoria' && (

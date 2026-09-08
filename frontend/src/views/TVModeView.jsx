@@ -42,7 +42,7 @@ export default function TVModeView({ onExit, campaign }) {
               <span className="text-amber-400 text-lg sm:text-xl font-bold">| MURAL DA OPERAÇÃO</span>
             </h1>
             <p className="text-xs sm:text-sm text-slate-400 mt-1 font-mono">
-              Campanha de Performance &amp; Incentivo • 01/09/2026 → 11/12/2026
+              Campanha de Performance &amp; Incentivo • {campaign?.start_date ? campaign.start_date.substring(0, 10).split('-').reverse().join('/') : '01/09/2026'} → {campaign?.end_date ? campaign.end_date.substring(0, 10).split('-').reverse().join('/') : '11/12/2026'}
             </p>
           </div>
         </div>

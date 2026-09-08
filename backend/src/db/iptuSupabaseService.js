@@ -3,7 +3,7 @@ const { supabase } = require('./supabaseDb');
 const { logAudit } = require('./supabaseService');
 const { IPTU_QUESTIONS_DATA } = require('./iptuSeedData');
 
-// Fallback questions cache if needed
+// Fallback questions cache for default Tributos / Impostos
 const DEFAULT_QUESTIONS = IPTU_QUESTIONS_DATA.map((q, idx) => ({
   id: idx + 1,
   numero: q.numero,
@@ -22,23 +22,93 @@ const DEFAULT_QUESTIONS = IPTU_QUESTIONS_DATA.map((q, idx) => ({
   justificativa_oficial: q.justificativa
 }));
 
-// Helper to generate unique token like 'IPTU-2026-X7K92P'
-function generateRandomToken() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0, O, 1, I for clarity
+// Helper to generate unique token like 'TRIB-2026-X7K92P'
+function generateRandomToken(secretariaName = 'Tributos / Impostos') {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let randomPart = '';
   for (let i = 0; i < 6; i++) {
     const r = crypto.randomInt(0, chars.length);
     randomPart += chars[r];
   }
-  return `IPTU-2026-${randomPart}`;
+  let prefix = 'AVAL';
+  const sec = String(secretariaName).toUpperCase();
+  if (sec.includes('TRIBUTO') || sec.includes('IPTU') || sec.includes('IMPOSTO')) prefix = 'TRIB';
+  else if (sec.includes('SAUD') || sec.includes('SAÚD')) prefix = 'SAUD';
+  else if (sec.includes('EPTC')) prefix = 'EPTC';
+  else if (sec.includes('DMLU')) prefix = 'DMLU';
+  else if (sec.includes('DMAE')) prefix = 'DMAE';
+  else if (sec.includes('SMED')) prefix = 'SMED';
+  else if (sec.includes('GUARDA')) prefix = 'GCM';
+  else if (sec.includes('SMAS')) prefix = 'SMAS';
+  else if (sec.includes('DEFESA')) prefix = 'DEFC';
+  else if (sec.includes('ZELAD')) prefix = 'ZELD';
+  else if (sec.includes('FISCAL')) prefix = 'FISC';
+
+  return `${prefix}-2026-${randomPart}`;
 }
 
 // ============================================================================
-// 1. CONFIGURAÇÕES DA PROVA
+// 1. GESTÃO DE SECRETARIAS & PROVAS
 // ============================================================================
-async function getIptuSettings() {
+
+async function getProvasList() {
   try {
-    const { data, error } = await supabase.from('iptu_configuracoes').select('*').limit(1);
+    const { data, error } = await supabase
+      .from('iptu_configuracoes')
+      .select('*')
+      .order('id', { ascending: true });
+
+    if (!error && data && data.length > 0) {
+      return data;
+    }
+  } catch (err) {
+    console.warn('Error reading provas list from Supabase:', err.message);
+  }
+
+  return [
+    { id: 1, secretaria: 'Tributos / Impostos', nome_prova: 'Avaliação de Conhecimentos — Tributos / Impostos' },
+    { id: 2, secretaria: 'Saúde', nome_prova: 'Avaliação de Conhecimentos — Saúde' },
+    { id: 3, secretaria: 'EPTC', nome_prova: 'Avaliação de Conhecimentos — EPTC' },
+    { id: 4, secretaria: 'DMLU', nome_prova: 'Avaliação de Conhecimentos — DMLU' },
+    { id: 5, secretaria: 'DMAE', nome_prova: 'Avaliação de Conhecimentos — DMAE' },
+    { id: 6, secretaria: 'Smed', nome_prova: 'Avaliação de Conhecimentos — Smed' },
+    { id: 7, secretaria: 'Guarda Municipal', nome_prova: 'Avaliação de Conhecimentos — Guarda Municipal' },
+    { id: 8, secretaria: 'SMAS', nome_prova: 'Avaliação de Conhecimentos — SMAS' },
+    { id: 9, secretaria: 'Defesa Civil', nome_prova: 'Avaliação de Conhecimentos — Defesa Civil' },
+    { id: 10, secretaria: 'Zeladoria', nome_prova: 'Avaliação de Conhecimentos — Zeladoria' },
+    { id: 11, secretaria: 'Fiscalização Municipal', nome_prova: 'Avaliação de Conhecimentos — Fiscalização Municipal' }
+  ];
+}
+
+async function createSecretariaProva({ secretaria, nome_prova, tempo_maximo_minutos = 30, nota_minima_aprovacao = 70 }, username = 'Admin') {
+  const secClean = String(secretaria || '').trim();
+  if (!secClean) throw new Error('O nome da secretaria é obrigatório.');
+
+  const nameClean = String(nome_prova || `Avaliação de Conhecimentos — ${secClean}`).trim();
+
+  const { data, error } = await supabase
+    .from('iptu_configuracoes')
+    .insert([{
+      secretaria: secClean,
+      nome_prova: nameClean,
+      tempo_maximo_minutos: Number(tempo_maximo_minutos) || 30,
+      nota_minima_aprovacao: Number(nota_minima_aprovacao) || 70,
+      max_tentativas_padrao: 1,
+      exibir_resultado_operador: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }])
+    .select();
+
+  if (error) throw error;
+  await logAudit(username, 'CREATE_PROVA', 'iptu_configuracoes', String(data[0].id), null, { secretaria: secClean });
+  return data[0];
+}
+
+async function getIptuSettings(provaId = 1) {
+  const pid = Number(provaId) || 1;
+  try {
+    const { data, error } = await supabase.from('iptu_configuracoes').select('*').eq('id', pid).limit(1);
     if (!error && data && data.length > 0) {
       return data[0];
     }
@@ -47,8 +117,9 @@ async function getIptuSettings() {
   }
 
   return {
-    id: 1,
-    nome_prova: 'Avaliação de Conhecimentos — IPTU e TCL Porto Alegre',
+    id: pid,
+    secretaria: 'Tributos / Impostos',
+    nome_prova: 'Avaliação de Conhecimentos — Tributos / Impostos',
     nota_minima_aprovacao: 70.0,
     tempo_maximo_minutos: 30,
     max_tentativas_padrao: 1,
@@ -58,9 +129,11 @@ async function getIptuSettings() {
   };
 }
 
-async function updateIptuSettings(newConfig, username = 'Admin') {
+async function updateIptuSettings(newConfig, username = 'Admin', provaId = 1) {
+  const pid = Number(provaId) || Number(newConfig.id) || 1;
   const payload = {
-    nome_prova: newConfig.nome_prova || 'Avaliação de Conhecimentos — IPTU e TCL Porto Alegre',
+    nome_prova: newConfig.nome_prova || 'Avaliação de Conhecimentos — Tributos / Impostos',
+    secretaria: newConfig.secretaria || 'Tributos / Impostos',
     nota_minima_aprovacao: Number(newConfig.nota_minima_aprovacao) || 70.0,
     tempo_maximo_minutos: newConfig.tempo_maximo_minutos !== undefined ? Number(newConfig.tempo_maximo_minutos) : 30,
     max_tentativas_padrao: Number(newConfig.max_tentativas_padrao) || 1,
@@ -72,7 +145,7 @@ async function updateIptuSettings(newConfig, username = 'Admin') {
 
   const { data, error } = await supabase
     .from('iptu_configuracoes')
-    .upsert([{ id: 1, ...payload }])
+    .upsert([{ id: pid, ...payload }])
     .select();
 
   if (error) {
@@ -80,14 +153,129 @@ async function updateIptuSettings(newConfig, username = 'Admin') {
     throw new Error('Falha ao salvar configurações no banco de dados.');
   }
 
-  await logAudit(username, 'UPDATE_CONFIG', 'iptu_configuracoes', '1', null, payload);
+  await logAudit(username, 'UPDATE_CONFIG', 'iptu_configuracoes', String(pid), null, payload);
   return data[0];
 }
 
 // ============================================================================
-// 2. OPERADORES DA PROVA & GERAÇÃO DE TOKENS
+// 2. IMPORTAÇÃO E GESTÃO DE QUESTÕES POR PROVA
 // ============================================================================
-async function getIptuOperators(search = '', status = '') {
+
+async function getQuestionsForProva(provaId = 1) {
+  const pid = Number(provaId) || 1;
+  const { data: dbQuestions, error: qErr } = await supabase
+    .from('iptu_questoes')
+    .select('*')
+    .eq('prova_id', pid)
+    .order('numero', { ascending: true });
+
+  if (qErr) throw qErr;
+
+  if (!dbQuestions || dbQuestions.length === 0) {
+    if (pid === 1) {
+      return DEFAULT_QUESTIONS;
+    }
+    return [];
+  }
+
+  const qIds = dbQuestions.map(q => q.id);
+  const { data: dbAlts } = await supabase
+    .from('iptu_alternativas')
+    .select('*')
+    .in('questao_id', qIds)
+    .order('letra', { ascending: true });
+
+  return dbQuestions.map(q => {
+    const alts = (dbAlts || []).filter(a => a.questao_id === q.id);
+    const correctAlt = alts.find(a => a.is_correta);
+    return {
+      id: q.id,
+      numero: q.numero,
+      enunciado: q.enunciado,
+      dificuldade: q.dificuldade,
+      ativo: q.ativo,
+      alternativas: alts.map(a => ({
+        id: a.id,
+        letra: a.letra,
+        texto: a.texto,
+        is_correta: !!a.is_correta
+      })),
+      gabarito_oficial: correctAlt ? correctAlt.letra : 'A'
+    };
+  });
+}
+
+async function importQuestionsForProva(provaId, questions, replaceExisting = true, username = 'Admin') {
+  const pid = Number(provaId) || 1;
+  if (!Array.isArray(questions) || questions.length === 0) {
+    throw new Error('Nenhuma questão válida encontrada para importar.');
+  }
+
+  if (replaceExisting) {
+    const { data: oldQ } = await supabase.from('iptu_questoes').select('id').eq('prova_id', pid);
+    if (oldQ && oldQ.length > 0) {
+      const oldIds = oldQ.map(q => q.id);
+      await supabase.from('iptu_alternativas').delete().in('questao_id', oldIds);
+      await supabase.from('iptu_questoes').delete().eq('prova_id', pid);
+    }
+  }
+
+  const inserted = [];
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    const { data: qData, error: qErr } = await supabase
+      .from('iptu_questoes')
+      .insert([{
+        prova_id: pid,
+        numero: q.numero || (i + 1),
+        enunciado: q.enunciado,
+        dificuldade: q.dificuldade || 'facil',
+        ativo: true,
+        created_at: new Date().toISOString()
+      }])
+      .select();
+
+    if (qErr) throw qErr;
+
+    const questaoId = qData[0].id;
+    const altsToInsert = (q.alternativas || []).map(a => ({
+      questao_id: questaoId,
+      letra: a.letra.toUpperCase(),
+      texto: a.texto,
+      is_correta: !!a.is_correta
+    }));
+
+    if (altsToInsert.length > 0) {
+      const { error: altErr } = await supabase.from('iptu_alternativas').insert(altsToInsert);
+      if (altErr) throw altErr;
+    }
+
+    inserted.push({
+      id: questaoId,
+      numero: q.numero || (i + 1),
+      enunciado: q.enunciado,
+      totalAlternativas: altsToInsert.length
+    });
+  }
+
+  await logAudit(username, 'IMPORT_QUESTIONS', 'iptu_questoes', String(pid), null, {
+    prova_id: pid,
+    totalQuestions: inserted.length
+  });
+
+  return {
+    success: true,
+    totalImported: inserted.length,
+    questions: inserted
+  };
+}
+
+// ============================================================================
+// 3. OPERADORES DA PROVA & GERAÇÃO DE TOKENS
+// ============================================================================
+
+async function getIptuOperators(search = '', status = '', provaId = 1) {
+  const pid = Number(provaId) || 1;
   let query = supabase.from('iptu_operadores').select('*').order('nome', { ascending: true });
   if (status) {
     query = query.eq('status', status);
@@ -99,8 +287,8 @@ async function getIptuOperators(search = '', status = '') {
     throw new Error('Erro ao carregar operadores da base de dados.');
   }
 
-  const { data: tokens } = await supabase.from('iptu_tokens').select('*');
-  const { data: attempts } = await supabase.from('iptu_tentativas').select('*').order('numero_tentativa', { ascending: false });
+  const { data: tokens } = await supabase.from('iptu_tokens').select('*').eq('prova_id', pid);
+  const { data: attempts } = await supabase.from('iptu_tentativas').select('*').eq('prova_id', pid).order('numero_tentativa', { ascending: false });
 
   let list = (ops || []).map(op => {
     const opTokens = (tokens || []).filter(t => t.iptu_operador_id === op.id);
@@ -110,7 +298,6 @@ async function getIptuOperators(search = '', status = '') {
 
     return {
       id: op.id,
-      operador_id: op.operador_id,
       nome: op.nome,
       matricula: op.matricula,
       status: op.status,
@@ -140,13 +327,9 @@ async function getIptuOperators(search = '', status = '') {
 
 async function createIptuOperator({ nome, matricula, operadorId = null }, username = 'Admin') {
   const nomClean = String(nome || '').trim();
-  if (!nomClean) {
-    throw new Error('O nome do operador é obrigatório.');
-  }
+  if (!nomClean) throw new Error('O nome do operador é obrigatório.');
 
   let matClean = String(matricula || '').trim().toUpperCase();
-
-  // If matricula was not passed, generate unique code
   if (!matClean) {
     const { data: existingAll } = await supabase.from('iptu_operadores').select('matricula');
     const existingSet = new Set((existingAll || []).map(o => (o.matricula || '').toUpperCase()));
@@ -156,7 +339,6 @@ async function createIptuOperator({ nome, matricula, operadorId = null }, userna
     }
     matClean = `OP-${randNum}`;
   } else {
-    // Check duplicate
     const { data: duplicate } = await supabase.from('iptu_operadores').select('id').eq('matricula', matClean).limit(1);
     if (duplicate && duplicate.length > 0) {
       throw new Error(`Já existe um operador cadastrado com a matrícula ${matClean}.`);
@@ -164,87 +346,52 @@ async function createIptuOperator({ nome, matricula, operadorId = null }, userna
   }
 
   const { data, error } = await supabase.from('iptu_operadores').insert([{
+    operador_id: operadorId ? Number(operadorId) : null,
     nome: nomClean,
     matricula: matClean,
-    operador_id: operadorId || null,
     status: 'ativo',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   }]).select();
 
-  if (error || !data || data.length === 0) {
-    console.error('Error inserting iptu_operador in Supabase:', error);
-    throw new Error('Falha ao cadastrar operador no Supabase: ' + (error?.message || 'Erro desconhecido'));
-  }
-
-  const createdOp = data[0];
-
-  // Auto-generate token for operator
-  const tokenRecord = await generateTokenForOperator(createdOp.id, username);
-
-  await logAudit(username, 'CREATE_IPTU_OPERATOR', 'iptu_operadores', String(createdOp.id), null, {
-    nome: createdOp.nome,
-    matricula: createdOp.matricula,
-    token: tokenRecord.token
-  });
-
-  return { ...createdOp, token: tokenRecord.token };
+  if (error) throw error;
+  await logAudit(username, 'CREATE_IPTU_OPERATOR', 'iptu_operadores', String(data[0].id), null, data[0]);
+  return data[0];
 }
 
 async function updateIptuOperator(id, { nome, matricula, status }, username = 'Admin') {
   const numId = Number(id);
-  const { data: existingList } = await supabase.from('iptu_operadores').select('*').eq('id', numId).limit(1);
-  if (!existingList || existingList.length === 0) {
-    throw new Error('Operador da prova não encontrado.');
-  }
-  const op = existingList[0];
+  const updatePayload = { updated_at: new Date().toISOString() };
+  if (nome) updatePayload.nome = String(nome).trim();
+  if (matricula) updatePayload.matricula = String(matricula).trim().toUpperCase();
+  if (status) updatePayload.status = status;
 
-  const payload = {
-    updated_at: new Date().toISOString()
-  };
+  const { data, error } = await supabase
+    .from('iptu_operadores')
+    .update(updatePayload)
+    .eq('id', numId)
+    .select();
 
-  if (nome) payload.nome = String(nome).trim();
-  if (status) payload.status = status;
-
-  if (matricula) {
-    const matClean = String(matricula).trim().toUpperCase();
-    const { data: duplicate } = await supabase.from('iptu_operadores').select('id').eq('matricula', matClean).neq('id', numId).limit(1);
-    if (duplicate && duplicate.length > 0) {
-      throw new Error(`Já existe outro operador com a matrícula ${matClean}.`);
-    }
-    payload.matricula = matClean;
-  }
-
-  const { data, error } = await supabase.from('iptu_operadores').update(payload).eq('id', numId).select();
-  if (error) {
-    throw new Error('Falha ao atualizar operador: ' + error.message);
-  }
-
-  await logAudit(username, 'UPDATE_IPTU_OPERATOR', 'iptu_operadores', String(numId), op, payload);
+  if (error) throw error;
+  await logAudit(username, 'UPDATE_IPTU_OPERATOR', 'iptu_operadores', String(numId), null, updatePayload);
   return data[0];
 }
 
 async function deleteIptuOperator(id, username = 'Admin') {
   const numId = Number(id);
-  const { error } = await supabase.from('iptu_operadores').delete().eq('id', numId);
-  if (error) {
-    throw new Error('Falha ao excluir operador: ' + error.message);
-  }
+  await supabase.from('iptu_respostas').delete().eq('tentativa_id', numId);
+  await supabase.from('iptu_tentativas').delete().eq('iptu_operador_id', numId);
+  await supabase.from('iptu_tokens').delete().eq('iptu_operador_id', numId);
 
-  await logAudit(username, 'DELETE_IPTU_OPERATOR', 'iptu_operadores', String(numId), null, 'Operador e dados da prova excluídos');
+  const { error } = await supabase.from('iptu_operadores').delete().eq('id', numId);
+  if (error) throw error;
+  await logAudit(username, 'DELETE_IPTU_OPERATOR', 'iptu_operadores', String(numId), null, 'Operador e dados removidos');
   return true;
 }
 
-// ============================================================================
-// 3. IMPORTAÇÃO DE OPERADORES EM MASSA (EXCEL / CSV)
-// ============================================================================
 async function importIptuOperatorsBulk(operatorsList, username = 'Admin') {
-  if (!Array.isArray(operatorsList) || operatorsList.length === 0) {
-    return { importedCount: 0, duplicateCount: 0, errorCount: 0, details: [] };
-  }
-
-  const { data: existingList } = await supabase.from('iptu_operadores').select('matricula');
-  const existingMatMap = new Set((existingList || []).map(o => (o.matricula || '').toUpperCase()));
+  const { data: existingAll } = await supabase.from('iptu_operadores').select('matricula');
+  const existingMatMap = new Set((existingAll || []).map(o => (o.matricula || '').toUpperCase()));
 
   let importedCount = 0;
   let duplicateCount = 0;
@@ -289,21 +436,26 @@ async function importIptuOperatorsBulk(operatorsList, username = 'Admin') {
 }
 
 // ============================================================================
-// 4. GESTÃO DE TOKENS INDIVIDUAIS
+// 4. GESTÃO DE TOKENS INDIVIDUAIS POR PROVA
 // ============================================================================
-async function generateTokenForOperator(iptuOperatorId, username = 'Admin') {
-  const numOpId = Number(iptuOperatorId);
-  const tokenCode = generateRandomToken();
 
-  // Invalidate any previously active token for this operator
+async function generateTokenForOperator(iptuOperatorId, username = 'Admin', provaId = 1) {
+  const numOpId = Number(iptuOperatorId);
+  const pid = Number(provaId) || 1;
+  const config = await getIptuSettings(pid);
+  const tokenCode = generateRandomToken(config.secretaria || config.nome_prova);
+
+  // Invalidate previous active token for this operator on THIS prova
   await supabase
     .from('iptu_tokens')
     .update({ status: 'invalidado', updated_at: new Date().toISOString() })
     .eq('iptu_operador_id', numOpId)
+    .eq('prova_id', pid)
     .eq('status', 'ativo');
 
   const { data, error } = await supabase.from('iptu_tokens').insert([{
     iptu_operador_id: numOpId,
+    prova_id: pid,
     token: tokenCode,
     status: 'ativo',
     created_by: username,
@@ -312,23 +464,23 @@ async function generateTokenForOperator(iptuOperatorId, username = 'Admin') {
   }]).select();
 
   if (error || !data || data.length === 0) {
-    console.error('Error creating token in Supabase:', error);
-    throw new Error('Falha ao gerar token no Supabase: ' + (error?.message || 'Erro'));
+    throw new Error('Falha ao gerar token: ' + (error?.message || 'Erro'));
   }
 
   return data[0];
 }
 
-async function generateAllTokens(username = 'Admin') {
-  const operators = await getIptuOperators();
+async function generateAllTokens(username = 'Admin', provaId = 1) {
+  const pid = Number(provaId) || 1;
+  const operators = await getIptuOperators('', '', pid);
   let generatedCount = 0;
 
   for (const op of operators) {
-    await generateTokenForOperator(op.id, username);
+    await generateTokenForOperator(op.id, username, pid);
     generatedCount++;
   }
 
-  await logAudit(username, 'GENERATE_ALL_TOKENS', 'iptu_tokens', null, null, { generatedCount });
+  await logAudit(username, 'GENERATE_ALL_TOKENS', 'iptu_tokens', null, null, { generatedCount, provaId: pid });
   return { generatedCount };
 }
 
@@ -341,20 +493,20 @@ async function invalidateToken(tokenIdOrCode, username = 'Admin') {
   }
 
   const { error } = await query;
-  if (error) {
-    throw new Error('Erro ao invalidar token: ' + error.message);
-  }
+  if (error) throw new Error('Erro ao invalidar token: ' + error.message);
 
   await logAudit(username, 'INVALIDATE_TOKEN', 'iptu_tokens', String(tokenIdOrCode), null, 'Token invalidado pelo administrador');
   return true;
 }
 
-async function allowNewAttempt(iptuOperatorId, username = 'Admin') {
+async function allowNewAttempt(iptuOperatorId, username = 'Admin', provaId = 1) {
   const numOpId = Number(iptuOperatorId);
-  const newToken = await generateTokenForOperator(numOpId, username);
+  const pid = Number(provaId) || 1;
+  const newToken = await generateTokenForOperator(numOpId, username, pid);
 
   await logAudit(username, 'ALLOW_NEW_ATTEMPT', 'iptu_operadores', String(numOpId), null, {
     newToken: newToken.token,
+    prova_id: pid,
     motivo: 'Nova tentativa liberada pelo supervisor'
   });
 
@@ -364,11 +516,11 @@ async function allowNewAttempt(iptuOperatorId, username = 'Admin') {
 // ============================================================================
 // 5. ÁREA DO OPERADOR — SESSÃO, SALVAMENTO E FINALIZAÇÃO
 // ============================================================================
+
 async function getOperatorSessionByToken(tokenCode) {
   const tokenStr = String(tokenCode || '').trim();
   if (!tokenStr) throw new Error('Token de acesso não fornecido.');
 
-  // Find token case-insensitively
   const { data: toks, error: tokErr } = await supabase
     .from('iptu_tokens')
     .select('*')
@@ -380,6 +532,7 @@ async function getOperatorSessionByToken(tokenCode) {
   }
 
   const tokenObj = toks[0];
+  const provaId = tokenObj.prova_id || 1;
 
   const { data: ops, error: opErr } = await supabase
     .from('iptu_operadores')
@@ -397,9 +550,8 @@ async function getOperatorSessionByToken(tokenCode) {
     throw new Error('Este token de avaliação foi invalidado pelo supervisor.');
   }
 
-  const config = await getIptuSettings();
+  const config = await getIptuSettings(provaId);
 
-  // Find latest attempt for this token or operator
   const { data: atts } = await supabase
     .from('iptu_tentativas')
     .select('*')
@@ -417,47 +569,32 @@ async function getOperatorSessionByToken(tokenCode) {
     });
   }
 
-  // Load questions from Supabase or fallback
-  let questionsData = [];
-  const { data: dbQuestions } = await supabase.from('iptu_questoes').select('*').order('numero', { ascending: true });
-  const { data: dbAlts } = await supabase.from('iptu_alternativas').select('*').order('letra', { ascending: true });
-
-  if (dbQuestions && dbQuestions.length === 20 && dbAlts && dbAlts.length >= 80) {
-    questionsData = dbQuestions.map(q => ({
-      id: q.id,
-      numero: q.numero,
-      enunciado: q.enunciado,
-      dificuldade: q.dificuldade,
-      alternativas: dbAlts.filter(a => a.questao_id === q.id).map(alt => ({
-        id: alt.id,
-        letra: alt.letra,
-        texto: alt.texto
-      }))
-    }));
-  } else {
-    // Sanitize default questions
-    questionsData = DEFAULT_QUESTIONS.map(q => ({
-      id: q.id,
-      numero: q.numero,
-      enunciado: q.enunciado,
-      dificuldade: q.dificuldade,
-      alternativas: q.alternativas.map(alt => ({
-        id: alt.id,
-        letra: alt.letra,
-        texto: alt.texto
-      }))
-    }));
-  }
+  // Load questions for THIS prova
+  const questionsData = await getQuestionsForProva(provaId);
+  const sanitizedQuestions = questionsData.map(q => ({
+    id: q.id,
+    numero: q.numero,
+    enunciado: q.enunciado,
+    dificuldade: q.dificuldade,
+    alternativas: (q.alternativas || []).map(alt => ({
+      id: alt.id,
+      letra: alt.letra,
+      texto: alt.texto
+    }))
+  }));
 
   return {
     token: tokenObj.token,
     token_status: tokenObj.status,
+    prova_id: provaId,
     operator: {
       id: operatorObj.id,
       nome: operatorObj.nome,
       matricula: operatorObj.matricula
     },
     config: {
+      id: config.id,
+      secretaria: config.secretaria,
       nome_prova: config.nome_prova,
       tempo_maximo_minutos: config.tempo_maximo_minutos,
       nota_minima_aprovacao: config.nota_minima_aprovacao,
@@ -470,161 +607,139 @@ async function getOperatorSessionByToken(tokenCode) {
       iniciada_em: attempt.iniciada_em,
       finalizada_em: attempt.finalizada_em,
       tempo_gasto_segundos: attempt.tempo_gasto_segundos,
-      nota: (attempt.status === 'concluida' || attempt.status === 'expirada_tempo') ? attempt.nota : null,
-      percentual: (attempt.status === 'concluida' || attempt.status === 'expirada_tempo') ? attempt.percentual : null,
-      acertos: (attempt.status === 'concluida' || attempt.status === 'expirada_tempo') ? attempt.acertos : null,
-      erros: (attempt.status === 'concluida' || attempt.status === 'expirada_tempo') ? attempt.erros : null,
-      resultado: (attempt.status === 'concluida' || attempt.status === 'expirada_tempo') ? attempt.resultado : null
+      nota: attempt.nota,
+      percentual: attempt.percentual,
+      resultado: attempt.resultado
     } : null,
     savedAnswers: savedAnswersMap,
-    questions: questionsData
+    questions: sanitizedQuestions
   };
 }
 
 async function startExam(tokenCode) {
   const session = await getOperatorSessionByToken(tokenCode);
 
-  if (session.attempt && (session.attempt.status === 'concluida' || session.attempt.status === 'expirada_tempo')) {
-    throw new Error('Esta prova já foi finalizada e não permite novas respostas.');
+  if (session.attempt && session.attempt.status === 'concluida') {
+    throw new Error('Esta avaliação já foi finalizada e não permite novo envio.');
   }
 
   if (session.attempt && session.attempt.status === 'em_andamento') {
     return session.attempt;
   }
 
-  // Count past attempts
-  const { data: pastAttempts } = await supabase
+  const { data: tokData } = await supabase.from('iptu_tokens').select('*').ilike('token', tokenCode.trim()).limit(1);
+  const tokenObj = tokData[0];
+  const provaId = tokenObj.prova_id || 1;
+
+  const { data: existingAttempts } = await supabase
     .from('iptu_tentativas')
-    .select('id')
-    .eq('iptu_operador_id', session.operator.id);
+    .select('numero_tentativa')
+    .eq('iptu_operador_id', tokenObj.iptu_operador_id)
+    .eq('prova_id', provaId);
 
-  const nextAttemptNum = (pastAttempts ? pastAttempts.length : 0) + 1;
+  const nextAttemptNum = (existingAttempts || []).length + 1;
+  const questions = await getQuestionsForProva(provaId);
+  const totalQuestoes = questions.length || 20;
 
-  // Get token record id
-  const { data: tokData } = await supabase
-    .from('iptu_tokens')
-    .select('id')
-    .ilike('token', tokenCode.trim())
-    .limit(1);
+  const { data: newAtt, error: attErr } = await supabase
+    .from('iptu_tentativas')
+    .insert([{
+      iptu_operador_id: tokenObj.iptu_operador_id,
+      token_id: tokenObj.id,
+      prova_id: provaId,
+      numero_tentativa: nextAttemptNum,
+      status: 'em_andamento',
+      iniciada_em: new Date().toISOString(),
+      total_questoes: totalQuestoes,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }])
+    .select();
 
-  const tokenId = tokData && tokData[0] ? tokData[0].id : null;
-
-  const { data, error } = await supabase.from('iptu_tentativas').insert([{
-    iptu_operador_id: session.operator.id,
-    token_id: tokenId,
-    numero_tentativa: nextAttemptNum,
-    status: 'em_andamento',
-    iniciada_em: new Date().toISOString(),
-    total_questoes: 20,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  }]).select();
-
-  if (error || !data || data.length === 0) {
-    console.error('Error starting attempt in Supabase:', error);
-    throw new Error('Erro ao iniciar tentativa de prova: ' + (error?.message || 'Erro'));
+  if (attErr || !newAtt || newAtt.length === 0) {
+    throw new Error('Falha ao registrar início da avaliação: ' + attErr?.message);
   }
 
-  return data[0];
+  return newAtt[0];
 }
 
 async function saveAnswer({ tokenCode, questaoNumero, letra }) {
   const session = await getOperatorSessionByToken(tokenCode);
   if (!session.attempt || session.attempt.status !== 'em_andamento') {
-    throw new Error('Tentativa de prova não está em andamento para salvar respostas.');
+    throw new Error('A avaliação não está em andamento para registrar respostas.');
   }
 
-  const questaoNum = Number(questaoNumero);
-  const letraUpper = String(letra || '').toUpperCase().trim();
+  const qNum = Number(questaoNumero);
+  const letraClean = String(letra || '').trim().toUpperCase();
 
-  // Find questao in Supabase or fallback
-  const { data: qList } = await supabase.from('iptu_questoes').select('id, numero').eq('numero', questaoNum).limit(1);
-  const qId = (qList && qList[0]) ? qList[0].id : questaoNum;
+  const questions = await getQuestionsForProva(session.prova_id || 1);
+  const qObj = questions.find(q => q.numero === qNum);
+  if (!qObj) throw new Error(`Questão número ${qNum} não encontrada nesta avaliação.`);
 
-  // Find alternative
-  const { data: altList } = await supabase
-    .from('iptu_alternativas')
-    .select('id, letra, is_correta')
-    .eq('questao_id', qId)
-    .eq('letra', letraUpper)
+  const { data: existingResp } = await supabase
+    .from('iptu_respostas')
+    .select('id')
+    .eq('tentativa_id', session.attempt.id)
+    .eq('questao_id', qObj.id)
     .limit(1);
 
-  const altId = (altList && altList[0]) ? altList[0].id : null;
-  const isCorreta = (altList && altList[0]) ? !!altList[0].is_correta : (DEFAULT_QUESTIONS.find(q => q.numero === questaoNum)?.gabarito_oficial === letraUpper);
-
-  const { error } = await supabase.from('iptu_respostas').upsert([{
-    tentativa_id: session.attempt.id,
-    questao_id: qId,
-    alternativa_selecionada_id: altId,
-    letra_selecionada: letraUpper,
-    is_correta: isCorreta,
-    respondida_em: new Date().toISOString()
-  }], { onConflict: 'tentativa_id,questao_id' });
-
-  if (error) {
-    console.error('Error saving answer to Supabase:', error);
-    throw new Error('Falha ao registrar resposta: ' + error.message);
+  if (existingResp && existingResp.length > 0) {
+    await supabase.from('iptu_respostas').update({
+      letra_selecionada: letraClean,
+      respondida_em: new Date().toISOString()
+    }).eq('id', existingResp[0].id);
+  } else {
+    await supabase.from('iptu_respostas').insert([{
+      tentativa_id: session.attempt.id,
+      questao_id: qObj.id,
+      letra_selecionada: letraClean,
+      respondida_em: new Date().toISOString()
+    }]);
   }
 
-  return { success: true, questaoNumero: questaoNum, letra: letraUpper };
+  return { success: true, questaoId: qObj.id, questaoNumero: qNum, letra: letraClean };
 }
 
-async function finishExam({ tokenCode, tempoGastoSegundos = 0, timedOut = false }) {
+async function finishExam({ tokenCode, tempoGastoSegundos, timedOut = false }) {
   const session = await getOperatorSessionByToken(tokenCode);
   if (!session.attempt) {
-    throw new Error('Tentativa não encontrada para finalização.');
+    throw new Error('Nenhuma tentativa encontrada para finalizar.');
   }
-
-  if (session.attempt.status === 'concluida' || session.attempt.status === 'expirada_tempo') {
+  if (session.attempt.status === 'concluida') {
     return session.attempt;
   }
 
-  // Fetch all saved answers and correct against official answer key
-  const { data: allAnswers } = await supabase
-    .from('iptu_respostas')
-    .select('questao_id, letra_selecionada, iptu_questoes(numero)')
-    .eq('tentativa_id', session.attempt.id);
-
-  const { data: dbQuestions } = await supabase.from('iptu_questoes').select('id, numero');
-  const { data: dbAlts } = await supabase.from('iptu_alternativas').select('questao_id, letra, is_correta').eq('is_correta', true);
-
-  const correctKeyMap = {};
-  (dbAlts || []).forEach(a => { correctKeyMap[a.questao_id] = a.letra; });
-
-  // Map answers
+  const provaId = session.prova_id || 1;
+  const questions = await getQuestionsForProva(provaId);
+  const { data: userAnswers } = await supabase.from('iptu_respostas').select('*').eq('tentativa_id', session.attempt.id);
   const ansMap = {};
-  (allAnswers || []).forEach(r => {
-    ansMap[r.questao_id] = r.letra_selecionada;
-  });
+  (userAnswers || []).forEach(r => { ansMap[r.questao_id] = (r.letra_selecionada || '').toUpperCase(); });
 
   let acertos = 0;
-  if (dbQuestions && dbQuestions.length === 20) {
-    dbQuestions.forEach(q => {
-      const chosen = ansMap[q.id];
-      const correct = correctKeyMap[q.id];
-      if (chosen && correct && chosen.toUpperCase() === correct.toUpperCase()) {
-        acertos++;
-      }
-    });
-  } else {
-    // Fallback comparison
-    DEFAULT_QUESTIONS.forEach(q => {
-      const chosen = ansMap[q.id] || ansMap[q.numero];
-      if (chosen && chosen.toUpperCase() === q.gabarito_oficial.toUpperCase()) {
-        acertos++;
-      }
-    });
-  }
+  let erros = 0;
+  const totalQuestoes = questions.length || 20;
 
-  const totalQuestoes = 20;
-  const erros = totalQuestoes - acertos;
-  const nota = Number(((acertos / totalQuestoes) * 10).toFixed(2));
-  const percentual = Number(((acertos / totalQuestoes) * 100).toFixed(2));
-  const notaMinima = session.config.nota_minima_aprovacao || 70.0;
+  questions.forEach(q => {
+    const selected = ansMap[q.id];
+    const correctAlt = (q.alternativas || []).find(a => a.is_correta);
+    const correctLetter = correctAlt ? correctAlt.letra.toUpperCase() : (q.gabarito_oficial || 'A').toUpperCase();
+
+    if (selected && selected === correctLetter) {
+      acertos++;
+    } else {
+      erros++;
+    }
+  });
+
+  const percentual = totalQuestoes > 0 ? Number(((acertos / totalQuestoes) * 100).toFixed(2)) : 0;
+  const nota = Number((percentual / 10).toFixed(2));
+  const config = await getIptuSettings(provaId);
+  const notaMinima = Number(config.nota_minima_aprovacao) || 70.0;
   const resultado = percentual >= notaMinima ? 'aprovado' : 'reprovado';
+  const statusTentativa = timedOut ? 'expirada_tempo' : 'concluida';
 
   const finishPayload = {
-    status: timedOut ? 'expirada_tempo' : 'concluida',
+    status: statusTentativa,
     finalizada_em: new Date().toISOString(),
     tempo_gasto_segundos: Number(tempoGastoSegundos) || 0,
     total_questoes: totalQuestoes,
@@ -636,11 +751,7 @@ async function finishExam({ tokenCode, tempoGastoSegundos = 0, timedOut = false 
     updated_at: new Date().toISOString()
   };
 
-  const { error: updErr } = await supabase.from('iptu_tentativas').update(finishPayload).eq('id', session.attempt.id);
-  if (updErr) {
-    console.error('Error updating attempt status:', updErr);
-  }
-
+  await supabase.from('iptu_tentativas').update(finishPayload).eq('id', session.attempt.id);
   await supabase.from('iptu_tokens').update({ status: 'utilizado', updated_at: new Date().toISOString() }).ilike('token', tokenCode.trim());
 
   return {
@@ -654,9 +765,11 @@ async function finishExam({ tokenCode, tempoGastoSegundos = 0, timedOut = false 
 // ============================================================================
 // 6. PAINEL ADMINISTRATIVO — DASHBOARD, CORREÇÃO, ESTATÍSTICAS & EXPORTAÇÃO
 // ============================================================================
-async function getIptuDashboard() {
-  const operators = await getIptuOperators();
-  const config = await getIptuSettings();
+
+async function getIptuDashboard(provaId = 1) {
+  const pid = Number(provaId) || 1;
+  const operators = await getIptuOperators('', '', pid);
+  const config = await getIptuSettings(pid);
 
   const totalOperadores = operators.length;
   let naoIniciadas = 0;
@@ -708,10 +821,12 @@ async function getIptuDashboard() {
   };
 }
 
-async function getIptuResults(search = '', status = '', resultado = '') {
+async function getIptuResults(search = '', status = '', resultado = '', provaId = 1) {
+  const pid = Number(provaId) || 1;
   const { data: attempts, error } = await supabase
     .from('iptu_tentativas')
     .select('*, iptu_operadores(id, nome, matricula)')
+    .eq('prova_id', pid)
     .order('finalizada_em', { ascending: false });
 
   if (error) {
@@ -763,31 +878,25 @@ async function getDetailedCorrection(tentativaId) {
 
   const attempt = attList[0];
   const operator = attempt.iptu_operadores || { nome: 'Operador', matricula: '-' };
+  const provaId = attempt.prova_id || 1;
 
-  // Fetch answers
   const { data: answers } = await supabase.from('iptu_respostas').select('*').eq('tentativa_id', numTentativaId);
   const ansMap = {};
   (answers || []).forEach(r => { ansMap[r.questao_id] = r.letra_selecionada; });
 
-  // Fetch questions
-  const { data: dbQuestions } = await supabase.from('iptu_questoes').select('*').order('numero', { ascending: true });
-  const { data: dbAlts } = await supabase.from('iptu_alternativas').select('*').order('letra', { ascending: true });
-
-  const questionsList = (dbQuestions && dbQuestions.length === 20) ? dbQuestions : DEFAULT_QUESTIONS;
+  const questionsList = await getQuestionsForProva(provaId);
 
   const correctionDetails = questionsList.map(q => {
-    const qAlts = (dbAlts && dbAlts.length > 0) ? dbAlts.filter(a => a.questao_id === q.id) : (q.alternativas || []);
-    const correctAlt = qAlts.find(a => a.is_correta) || qAlts.find(a => a.letra === (q.gabarito_oficial || 'A'));
-    const gabarito = correctAlt ? correctAlt.letra : (q.gabarito_oficial || 'C');
+    const correctAlt = (q.alternativas || []).find(a => a.is_correta);
+    const gabarito = correctAlt ? correctAlt.letra : (q.gabarito_oficial || 'A');
     const respostaOperador = ansMap[q.id] || null;
     const isCorreta = respostaOperador ? respostaOperador.toUpperCase() === gabarito.toUpperCase() : false;
-    const justificativa = (correctAlt && correctAlt.justificativa) || q.justificativa_oficial || '';
 
     return {
       numero: q.numero,
       enunciado: q.enunciado,
       dificuldade: q.dificuldade,
-      alternativas: qAlts.map(a => ({
+      alternativas: (q.alternativas || []).map(a => ({
         letra: a.letra,
         texto: a.texto,
         is_correta: a.letra === gabarito
@@ -795,17 +904,17 @@ async function getDetailedCorrection(tentativaId) {
       resposta_operador: respostaOperador,
       gabarito_oficial: gabarito,
       status: isCorreta ? 'CORRETA' : 'INCORRETA',
-      is_correta: isCorreta,
-      justificativa
+      is_correta: isCorreta
     };
   });
 
   return {
-    attempt: {
+    tentativa: {
       id: attempt.id,
       operador: operator.nome,
       matricula: operator.matricula,
       numero_tentativa: attempt.numero_tentativa,
+      status: attempt.status,
       iniciada_em: attempt.iniciada_em,
       finalizada_em: attempt.finalizada_em,
       tempo_gasto_segundos: attempt.tempo_gasto_segundos,
@@ -815,42 +924,46 @@ async function getDetailedCorrection(tentativaId) {
       percentual: attempt.percentual,
       resultado: attempt.resultado
     },
-    correction: correctionDetails
+    questions: correctionDetails
   };
 }
 
-async function getQuestionsPerformance() {
-  const { data: dbQuestions } = await supabase.from('iptu_questoes').select('*').order('numero', { ascending: true });
-  const { data: dbAlts } = await supabase.from('iptu_alternativas').select('*').eq('is_correta', true);
-  const { data: allAnswers } = await supabase.from('iptu_respostas').select('questao_id, letra_selecionada, is_correta');
+async function getQuestionsPerformance(provaId = 1) {
+  const pid = Number(provaId) || 1;
+  const questionsList = await getQuestionsForProva(pid);
+  const { data: attempts } = await supabase.from('iptu_tentativas').select('id').eq('prova_id', pid);
+  const attemptIds = (attempts || []).map(a => a.id);
 
-  const correctKeyMap = {};
-  (dbAlts || []).forEach(a => { correctKeyMap[a.questao_id] = a.letra; });
-
-  const questionsList = (dbQuestions && dbQuestions.length === 20) ? dbQuestions : DEFAULT_QUESTIONS;
+  let answers = [];
+  if (attemptIds.length > 0) {
+    const { data: ans } = await supabase.from('iptu_respostas').select('*').in('tentativa_id', attemptIds);
+    answers = ans || [];
+  }
 
   const stats = questionsList.map(q => {
-    const qAnswers = (allAnswers || []).filter(r => r.questao_id === q.id);
-    const total = qAnswers.length;
-    let acertos = 0;
-    const gabarito = correctKeyMap[q.id] || q.gabarito_oficial || 'C';
+    const qAnswers = answers.filter(a => a.questao_id === q.id);
+    const totalRespostas = qAnswers.length;
+    const correctAlt = (q.alternativas || []).find(a => a.is_correta);
+    const gabarito = correctAlt ? correctAlt.letra.toUpperCase() : (q.gabarito_oficial || 'A').toUpperCase();
 
+    let acertos = 0;
     qAnswers.forEach(ans => {
-      if (ans.is_correta || (ans.letra_selecionada && ans.letra_selecionada.toUpperCase() === gabarito.toUpperCase())) {
+      if (ans.letra_selecionada && ans.letra_selecionada.toUpperCase() === gabarito) {
         acertos++;
       }
     });
 
-    const erros = total - acertos;
-    const percentualAcerto = total > 0 ? Number(((acertos / total) * 100).toFixed(1)) : 0;
-    const percentualErro = total > 0 ? Number(((erros / total) * 100).toFixed(1)) : 0;
+    const erros = totalRespostas - acertos;
+    const percentualAcerto = totalRespostas > 0 ? Number(((acertos / totalRespostas) * 100).toFixed(1)) : 0;
+    const percentualErro = totalRespostas > 0 ? Number(((erros / totalRespostas) * 100).toFixed(1)) : 0;
 
     return {
+      id: q.id,
       numero: q.numero,
-      dificuldade: q.dificuldade,
       enunciado: q.enunciado,
+      dificuldade: q.dificuldade,
       gabarito,
-      total_respostas: total,
+      total_respostas: totalRespostas,
       acertos,
       erros,
       percentual_acerto: percentualAcerto,
@@ -866,19 +979,22 @@ async function getQuestionsPerformance() {
   };
 }
 
-async function getDifficultyPerformance() {
-  const { questions } = await getQuestionsPerformance();
+async function getDifficultyPerformance(provaId = 1) {
+  const pid = Number(provaId) || 1;
+  const { questions } = await getQuestionsPerformance(pid);
 
   const groups = {
-    facil: { nome: 'Fácil (Questões 1–10)', totalQuestoes: 10, totalRespostas: 0, acertos: 0, percentual: 0 },
-    medio: { nome: 'Médio (Questões 11–15)', totalQuestoes: 5, totalRespostas: 0, acertos: 0, percentual: 0 },
-    dificil: { nome: 'Difícil (Questões 16–20)', totalQuestoes: 5, totalRespostas: 0, acertos: 0, percentual: 0 }
+    facil: { nome: 'Fácil', totalQuestoes: 0, totalRespostas: 0, acertos: 0, percentual: 0 },
+    medio: { nome: 'Médio', totalQuestoes: 0, totalRespostas: 0, acertos: 0, percentual: 0 },
+    dificil: { nome: 'Difícil', totalQuestoes: 0, totalRespostas: 0, acertos: 0, percentual: 0 }
   };
 
   questions.forEach(q => {
-    if (groups[q.dificuldade]) {
-      groups[q.dificuldade].totalRespostas += q.total_respostas;
-      groups[q.dificuldade].acertos += q.acertos;
+    const d = q.dificuldade || 'facil';
+    if (groups[d]) {
+      groups[d].totalQuestoes++;
+      groups[d].totalRespostas += q.total_respostas;
+      groups[d].acertos += q.acertos;
     }
   });
 
@@ -891,6 +1007,10 @@ async function getDifficultyPerformance() {
 }
 
 module.exports = {
+  getProvasList,
+  createSecretariaProva,
+  getQuestionsForProva,
+  importQuestionsForProva,
   getIptuSettings,
   updateIptuSettings,
   getIptuOperators,

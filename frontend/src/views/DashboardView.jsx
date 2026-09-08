@@ -68,7 +68,11 @@ export default function DashboardView({ onNavigate, campaign }) {
               <span>🎯 DESAFIO 156</span>
             </h1>
             <p className="text-xs text-slate-400 mt-1 font-mono">
-              Período Oficial da Campanha: <strong className="text-slate-200">01/09/2026 → 11/12/2026</strong>
+              Período Oficial da Campanha: <strong className="text-slate-200">
+                {campaign?.start_date ? campaign.start_date.substring(0, 10).split('-').reverse().join('/') : '01/09/2026'}
+                {' → '}
+                {campaign?.end_date ? campaign.end_date.substring(0, 10).split('-').reverse().join('/') : '11/12/2026'}
+              </strong>
             </p>
           </div>
 

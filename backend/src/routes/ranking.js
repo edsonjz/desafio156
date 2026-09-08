@@ -16,15 +16,29 @@ router.get('/', authMiddleware, async (req, res) => {
 
     if (opErr) throw opErr;
 
-    // 2. Fetch point transactions with date filters
+    // 2. Fetch point transactions with dynamic date filters
     let txQuery = supabase.from('point_transactions').select('*');
 
+    const { getCampaign } = require('../db/supabaseService');
+    const campaign = await getCampaign();
+    const campStart = campaign?.start_date || '2026-09-01';
+    const campEnd = campaign?.end_date || '2026-12-11';
+
     if (period === 'month') {
-      txQuery = txQuery.gte('event_date', '2026-09-01').lte('event_date', '2026-09-30');
+      const now = new Date();
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().substring(0, 10);
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().substring(0, 10);
+      txQuery = txQuery.gte('event_date', firstDay).lte('event_date', lastDay);
     } else if (period === 'week') {
-      txQuery = txQuery.gte('event_date', '2026-09-01').lte('event_date', '2026-09-07');
+      const now = new Date();
+      const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
+      const today = now.toISOString().substring(0, 10);
+      txQuery = txQuery.gte('event_date', oneWeekAgo).lte('event_date', today);
     } else if (period === 'custom' && startDate && endDate) {
       txQuery = txQuery.gte('event_date', startDate).lte('event_date', endDate);
+    } else {
+      // Default: within active campaign bounds
+      txQuery = txQuery.gte('event_date', campStart).lte('event_date', campEnd);
     }
 
     const { data: transactions, error: txErr } = await txQuery;
