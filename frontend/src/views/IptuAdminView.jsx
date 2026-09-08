@@ -423,105 +423,113 @@ export default function IptuAdminView({ showToast }) {
 
   return (
     <div className="space-y-6">
-      {/* Top Banner: Secretaria & Prova Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-md">
-        <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-2xl flex items-center justify-center font-bold shrink-0">
-            <FileCheck className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="text-[11px] font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-2">
-              <span>MÓDULO DE AVALIAÇÕES MULTI-SECRETARIAS</span>
-              <span className="bg-amber-500/20 text-amber-300 text-[10px] px-2 py-0.5 rounded-full border border-amber-500/30 font-mono">
-                156+POA
-              </span>
+      {/* Top Banner & Control Deck: Secretaria, Prova e Ações */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-md space-y-4">
+        {/* Linha 1: Título da Prova & Ações Globais Perfeitamente Alinhadas */}
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-12 h-12 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-2xl flex items-center justify-center font-bold shrink-0 shadow-inner">
+              <FileCheck className="w-6 h-6" />
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
-              <span>{settings.nome_prova || `Avaliação — ${currentSecretaria.secretaria}`}</span>
-            </h1>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-400">
+                  MÓDULO DE AVALIAÇÕES
+                </span>
+                <span className="bg-amber-500/20 text-amber-300 text-[10px] px-2 py-0.5 rounded-full border border-amber-500/30 font-mono font-bold">
+                  156+POA
+                </span>
+                <span className="bg-slate-800 text-slate-300 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-slate-700">
+                  {currentSecretaria.secretaria}
+                </span>
+              </div>
+              <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight leading-tight">
+                {settings.nome_prova || `Avaliação de Conhecimentos — ${currentSecretaria.secretaria}`}
+              </h1>
+            </div>
+          </div>
+
+          {/* Barra de Ações Símétrica e Responsiva */}
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
+            <button
+              onClick={() => loadAllData(selectedProvaId)}
+              className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl transition border border-slate-700 flex items-center justify-center cursor-pointer shrink-0"
+              title="Atualizar Dados"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+
+            <button
+              onClick={() => {
+                setQuestionFile(null);
+                setQuestionImportResult(null);
+                setShowQuestionImportModal(true);
+              }}
+              className="px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-extrabold rounded-xl flex items-center gap-2 transition shadow-md shadow-amber-500/20 cursor-pointer whitespace-nowrap"
+            >
+              <Upload className="w-4 h-4" />
+              <span>Importar Prova</span>
+            </button>
+
+            <button
+              onClick={handleExportExcel}
+              className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition shadow-md shadow-emerald-600/20 cursor-pointer whitespace-nowrap"
+            >
+              <Download className="w-4 h-4" />
+              <span>Exportar Excel</span>
+            </button>
+
+            <button
+              onClick={() => setShowNewSecretariaModal(true)}
+              className="px-3.5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition shadow-md shadow-purple-600/20 cursor-pointer whitespace-nowrap"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Nova Secretaria</span>
+            </button>
           </div>
         </div>
 
-        {/* Global Action Bar */}
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => loadAllData(selectedProvaId)}
-            className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition border border-slate-700 cursor-pointer"
-            title="Atualizar Dados"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
+        {/* Linha 2: Seletor de Secretarias Integrado com Estilo Pílulas */}
+        <div className="pt-3 border-t border-slate-800/80">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <Building2 className="w-3.5 h-3.5 text-amber-400" />
+              <span>Selecione a Secretaria / Prova:</span>
+            </span>
+            <span className="text-[11px] text-slate-500">
+              {provasList.length} secretarias configuradas
+            </span>
+          </div>
 
-          <button
-            onClick={() => {
-              setQuestionFile(null);
-              setQuestionImportResult(null);
-              setShowQuestionImportModal(true);
-            }}
-            className="px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-extrabold rounded-xl flex items-center gap-2 transition shadow-md shadow-amber-500/20 cursor-pointer"
-          >
-            <Upload className="w-4 h-4" />
-            <span>Importar Prova (Excel / PDF)</span>
-          </button>
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
+            {provasList.map((p) => {
+              const isSelected = Number(selectedProvaId) === Number(p.id);
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => setSelectedProvaId(p.id)}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-2 shrink-0 transition cursor-pointer border ${
+                    isSelected
+                      ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-500/20'
+                      : 'bg-slate-950/80 text-slate-300 hover:bg-slate-800 hover:text-white border-slate-800'
+                  }`}
+                >
+                  <span>{p.secretaria}</span>
+                  {isSelected && (
+                    <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse" />
+                  )}
+                </button>
+              );
+            })}
 
-          <button
-            onClick={handleExportExcel}
-            className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition shadow-md shadow-emerald-600/20 cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            <span>Exportar Resultados</span>
-          </button>
-
-          <button
-            onClick={() => setShowNewSecretariaModal(true)}
-            className="px-3.5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition shadow-md shadow-purple-600/20 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>+ Nova Secretaria</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Secretaria Selector Tabs / Carousel */}
-      <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl shadow-sm">
-        <div className="flex items-center justify-between mb-2 px-1">
-          <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-            <Building2 className="w-3.5 h-3.5 text-amber-400" />
-            <span>Selecione a Secretaria / Prova Ativa:</span>
-          </span>
-          <span className="text-[11px] text-slate-500">
-            {provasList.length} secretarias configuradas
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
-          {provasList.map((p) => {
-            const isSelected = Number(selectedProvaId) === Number(p.id);
-            return (
-              <button
-                key={p.id}
-                onClick={() => setSelectedProvaId(p.id)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-2 shrink-0 transition cursor-pointer border ${
-                  isSelected
-                    ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-500/20'
-                    : 'bg-slate-950/80 text-slate-300 hover:bg-slate-800 hover:text-white border-slate-800'
-                }`}
-              >
-                <span>{p.secretaria}</span>
-                {isSelected && (
-                  <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse" />
-                )}
-              </button>
-            );
-          })}
-
-          <button
-            onClick={() => setShowNewSecretariaModal(true)}
-            className="px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-white border border-dashed border-slate-700 transition cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Outra Secretaria</span>
-          </button>
+            <button
+              onClick={() => setShowNewSecretariaModal(true)}
+              className="px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 bg-purple-950/40 hover:bg-purple-900/50 text-purple-300 hover:text-purple-200 border border-purple-500/30 transition cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>+ Outra Secretaria</span>
+            </button>
+          </div>
         </div>
       </div>
 

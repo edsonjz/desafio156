@@ -8,10 +8,28 @@ router.get('/status', authMiddleware, async (req, res) => {
   try {
     const campaign = await getCampaign();
 
-    const endDate = new Date(`${campaign.end_date}T23:59:59-03:00`);
-    const now = new Date();
-    const diffTime = endDate - now;
-    const daysRemaining = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+    // Parse start_date and end_date (YYYY-MM-DD)
+    const [startYear, startMonth, startDay] = (campaign.start_date || '2026-09-14').split('-').map(Number);
+    const [endYear, endMonth, endDay] = (campaign.end_date || '2026-12-11').split('-').map(Number);
+
+    const startDate = new Date(startYear, startMonth - 1, startDay);
+    const endDate = new Date(endYear, endMonth - 1, endDay);
+
+    const today = new Date();
+    const currentMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+    // Se hoje for posterior a endDate, restam 0 dias
+    // Se hoje for anterior a startDate, conta a duracao total da campanha inclusive (start a end)
+    // Se hoje estiver dentro do periodo, conta de hoje ate end inclusive
+    let daysRemaining = 0;
+    if (currentMidnight > endDate) {
+      daysRemaining = 0;
+    } else {
+      const effectiveStart = currentMidnight < startDate ? startDate : currentMidnight;
+      const diffMs = endDate.getTime() - effectiveStart.getTime();
+      const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+      daysRemaining = Math.max(0, diffDays + 1);
+    }
 
     return res.json({
       id: campaign.id,
