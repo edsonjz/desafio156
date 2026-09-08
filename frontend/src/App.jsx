@@ -48,10 +48,10 @@ export default function App() {
 
   useEffect(() => {
     checkAuth();
-    loadCampaign();
 
     const handleExpired = () => {
       setUser(null);
+      setCampaign(null);
       showToast('Sessão expirada. Faça login novamente.', 'error');
     };
 
@@ -68,6 +68,7 @@ export default function App() {
     try {
       const res = await apiFetch('/auth/me');
       setUser(res.user);
+      loadCampaign();
     } catch (err) {
       removeToken();
       setUser(null);
@@ -245,7 +246,7 @@ export default function App() {
           )}
 
           {activeTab === 'configuracoes' && (
-            <SettingsView campaign={campaign} onCampaignUpdate={loadCampaign} showToast={showToast} />
+            <SettingsView campaign={campaign} onCampaignUpdate={loadCampaign} showToast={showToast} user={user} />
           )}
         </main>
       </div>

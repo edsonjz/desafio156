@@ -18,7 +18,16 @@ function authMiddleware(req, res, next) {
   }
 }
 
+function requireMasterAdmin(req, res, next) {
+  if (!req.user || req.user.role !== 'master') {
+    return res.status(403).json({ error: 'Acesso negado. Apenas o Administrador Master tem permissão para gerenciar usuários administradores.' });
+  }
+  next();
+}
+
+
 module.exports = {
   authMiddleware,
+  requireMasterAdmin,
   JWT_SECRET
 };

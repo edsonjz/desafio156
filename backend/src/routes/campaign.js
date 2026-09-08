@@ -3,8 +3,8 @@ const router = express.Router();
 const { getCampaign, updateCampaign, lockCampaign, logAudit } = require('../db/supabaseService');
 const { authMiddleware } = require('../middleware/auth');
 
-// GET /api/campaign/status
-router.get('/status', async (req, res) => {
+// GET /api/campaign/status (Protected - Admins only)
+router.get('/status', authMiddleware, async (req, res) => {
   try {
     const campaign = await getCampaign();
 

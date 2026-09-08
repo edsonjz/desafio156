@@ -1,7 +1,9 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const seedDatabase = require('./db/seed');
+
 
 // Initialize Express App
 const app = express();
