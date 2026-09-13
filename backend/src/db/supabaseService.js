@@ -74,6 +74,12 @@ async function syncOperatorTickets(operatorId, campaignId = 1) {
       await supabase.from('tickets').insert(newTicketsToInsert);
 
       return { totalPoints, totalTickets: totalTicketsEarned, newlyEarned: needed, newTicketCodes };
+    } else if (existingCount > totalTicketsEarned) {
+      const excess = existingCount - totalTicketsEarned;
+      const sorted = [...existingTickets].sort((a, b) => b.ticket_number - a.ticket_number);
+      const toDeleteIds = sorted.slice(0, excess).map(t => t.id);
+      await supabase.from('tickets').delete().in('id', toDeleteIds);
+      return { totalPoints, totalTickets: totalTicketsEarned, newlyEarned: -excess, newTicketCodes: [] };
     }
 
     return { totalPoints, totalTickets: totalTicketsEarned, newlyEarned: 0, newTicketCodes: [] };
@@ -307,16 +313,106 @@ async function importOperatorsBulk(operatorsList) {
 // ROULETTE
 // ==========================================
 const ROULETTE_PRIZES = [
-  { id: 'pts10', name: '+10 pontos', icon: '🎁', prize_type: 'points', points: 10, description: 'Crédito imediato de +10 pontos no extrato', color: '#0284c7' },
-  { id: 'pts20', name: '+20 pontos', icon: '⭐', prize_type: 'points', points: 20, description: 'Crédito imediato de +20 pontos no extrato', color: '#7c3aed' },
-  { id: 'pausa', name: 'Pausa extra de 15m', icon: '☕', prize_type: 'extra_break', points: 0, description: 'Descanso extra de 15 minutos autorizado', color: '#d97706' },
-  { id: 'saida', name: 'Saída 30m mais cedo', icon: '⏰', prize_type: 'early_leave', points: 0, description: 'Liberação antecipada de 30 minutos', color: '#059669' },
-  { id: 'tkt1', name: '+1 bilhete extra', icon: '🎟️', prize_type: 'ticket', points: 50, description: 'Equivalente a +50 pts com bilhete gerado', color: '#2563eb' },
-  { id: 'tkt2', name: '+2 bilhetes extras', icon: '🎫', prize_type: 'ticket', points: 100, description: 'Equivalente a +100 pts com 2 bilhetes gerados', color: '#9333ea' },
-  { id: 'dobro', name: 'Pontos em dobro', icon: '🔥', prize_type: 'double_points', points: 0, description: 'Multiplica x2 o próximo lançamento de pontos', color: '#ea580c' },
-  { id: 'surpresa', name: 'Prêmio surpresa', icon: '✨', prize_type: 'surprise', points: 0, description: 'Recompensa surpresa especial da supervisão', color: '#ca8a04' },
-  { id: 'nada', name: 'Tente novamente', icon: '🔄', prize_type: 'nothing', points: 0, description: 'Não foi dessa vez! Continue focado', color: '#dc2626' },
-  { id: 'desafio', name: 'Desafio especial', icon: '🎯', prize_type: 'special_challenge', points: 0, description: 'Missão relâmpago com bonificação extra', color: '#0891b2' }
+  {
+    id: 'pausa10',
+    name: 'Pausa extra 10 min',
+    icon: '☕',
+    prize_type: 'extra_break',
+    points: 0,
+    description: 'Pausa adicional de 10 minutos autorizada pela supervisão',
+    color: '#0284c7', // Sky Blue
+    badge: 'Pausa 10m'
+  },
+  {
+    id: 'pausa15',
+    name: 'Pausa extra 15 min',
+    icon: '☕',
+    prize_type: 'extra_break',
+    points: 0,
+    description: 'Pausa adicional de 15 minutos autorizada pela supervisão',
+    color: '#059669', // Emerald Green
+    badge: 'Pausa 15m'
+  },
+  {
+    id: 'pausa20',
+    name: 'Pausa extra 20 min',
+    icon: '☕',
+    prize_type: 'extra_break',
+    points: 0,
+    description: 'Pausa adicional de 20 minutos autorizada pela supervisão',
+    color: '#d97706', // Amber Gold
+    badge: 'Pausa 20m'
+  },
+  {
+    id: 'saida30',
+    name: 'Saída 30 min mais cedo',
+    icon: '⏰',
+    prize_type: 'early_leave',
+    points: 0,
+    description: 'Liberação antecipada de 30 minutos no fim do expediente',
+    color: '#7c3aed', // Violet
+    badge: 'Saída 30m'
+  },
+  {
+    id: 'saida60',
+    name: 'Saída 1h mais cedo',
+    icon: '🕐',
+    prize_type: 'early_leave',
+    points: 0,
+    description: 'Liberação antecipada de 1 hora autorizada pela chefia',
+    color: '#9333ea', // Purple
+    badge: 'Saída 1h'
+  },
+  {
+    id: 'tkt1',
+    name: '+1 bilhete',
+    icon: '🎟️',
+    prize_type: 'ticket',
+    points: 50,
+    description: 'Garante +1 novo bilhete oficial (+50 pontos) para o sorteio de folgas',
+    color: '#2563eb', // Royal Blue
+    badge: '+1 Bilhete'
+  },
+  {
+    id: 'dobro',
+    name: 'Pontos em dobro',
+    icon: '🔥',
+    prize_type: 'double_points',
+    points: 0,
+    description: 'Multiplica x2 a pontuação do próximo lançamento positivo da campanha',
+    color: '#ea580c', // Flame Orange
+    badge: 'Pontos x2'
+  },
+  {
+    id: 'giro_extra',
+    name: 'Giro extra',
+    icon: '🎲',
+    prize_type: 'extra_spin',
+    points: 0,
+    description: 'Direito imediato a mais um giro na Roleta 156 para continuar premiando!',
+    color: '#e11d48', // Crimson Rose
+    badge: 'Girar de novo'
+  },
+  {
+    id: 'coringa',
+    name: 'Coringa 156',
+    icon: '👑',
+    prize_type: 'wildcard',
+    points: 0,
+    description: 'Recompensa coringa exclusiva: combine um benefício à sua escolha com a coordenação',
+    color: '#ca8a04', // Gold
+    badge: 'Escolha Livre'
+  },
+  {
+    id: 'dupla',
+    name: 'Prêmio em dupla (escolhe um colega para ganhar junto mais um bilhete)',
+    icon: '🤝',
+    prize_type: 'duo_prize',
+    points: 50,
+    description: 'Você ganha +1 bilhete (+50 pts) e escolhe um colega de equipe para ganhar +1 bilhete junto!',
+    color: '#0d9488', // Teal
+    badge: 'Você + Colega'
+  }
 ];
 
 async function spinRoulette(operatorId, selectedPrizeId = null, username = 'Admin') {
@@ -336,27 +432,28 @@ async function spinRoulette(operatorId, selectedPrizeId = null, username = 'Admi
   }
 
   // Insert spin into Supabase
-  await supabase.from('roulette_spins').insert([{
+  const { data: insertedSpin } = await supabase.from('roulette_spins').insert([{
     operator_id: operatorId,
     prize: prizeObj.name,
     prize_type: prizeObj.prize_type,
     points: prizeObj.points,
     created_by: username
-  }]);
+  }]).select();
 
+  const spinId = insertedSpin && insertedSpin[0] ? insertedSpin[0].id : null;
   const dateToday = new Date().toISOString().split('T')[0];
   let pointsAwarded = prizeObj.points;
   let newlyEarnedTickets = 0;
   let newTicketCodes = [];
 
   // Prize effects
-  if (prizeObj.prize_type === 'points' || prizeObj.prize_type === 'ticket') {
+  if (prizeObj.prize_type === 'ticket' || prizeObj.prize_type === 'duo_prize') {
     await supabase.from('point_transactions').insert([{
       operator_id: operatorId,
       campaign_id: 1,
       points: pointsAwarded,
       event_date: dateToday,
-      description: `Roleta 156 — Prêmio: ${prizeObj.name}`,
+      description: `Roleta 156 — Prêmio: ${prizeObj.name}${spinId ? ` (Giro #${spinId})` : ''}`,
       observation: prizeObj.description,
       created_by: username
     }]);
@@ -364,28 +461,40 @@ async function spinRoulette(operatorId, selectedPrizeId = null, username = 'Admi
     const sync = await syncOperatorTickets(operatorId, 1);
     newlyEarnedTickets = sync.newlyEarned;
     newTicketCodes = sync.newTicketCodes;
+
+    if (prizeObj.prize_type === 'duo_prize') {
+      await supabase.from('prizes').insert([{
+        operator_id: operatorId,
+        name: 'Prêmio em Dupla (+1 Bilhete compartilhado)',
+        category: 'dupla',
+        status: 'Pendente',
+        observation: `Conquistado na Roleta 156${spinId ? ` (Giro #${spinId})` : ''}: Escolha um colega para receber +1 bilhete (+50 pts) junto!`,
+        created_by: username
+      }]);
+    }
   } else if (prizeObj.prize_type === 'double_points') {
     await supabase.from('operator_double_points').upsert([{
       operator_id: operatorId,
       active: 1
     }], { onConflict: 'operator_id' });
-  } else if (['extra_break', 'early_leave', 'surprise'].includes(prizeObj.prize_type)) {
+  } else if (['extra_break', 'early_leave', 'wildcard', 'extra_spin'].includes(prizeObj.prize_type)) {
     let cat = 'outros';
     if (prizeObj.prize_type === 'extra_break') cat = 'pausa_extra';
     if (prizeObj.prize_type === 'early_leave') cat = 'saida_mais_cedo';
-    if (prizeObj.prize_type === 'surprise') cat = 'surpresa';
+    if (prizeObj.prize_type === 'wildcard') cat = 'coringa';
+    if (prizeObj.prize_type === 'extra_spin') cat = 'giro_extra';
 
     await supabase.from('prizes').insert([{
       operator_id: operatorId,
       name: prizeObj.name,
       category: cat,
       status: 'Pendente',
-      observation: `Conquistado na Roleta 156: ${prizeObj.description}`,
+      observation: `Conquistado na Roleta 156${spinId ? ` (Giro #${spinId})` : ''}: ${prizeObj.description}`,
       created_by: username
     }]);
   }
 
-  await logAudit(username, 'SPIN_ROULETTE', 'roulette_spins', null, null, {
+  await logAudit(username, 'SPIN_ROULETTE', 'roulette_spins', spinId ? String(spinId) : null, null, {
     operatorName: operator.name,
     prize: prizeObj.name,
     prizeType: prizeObj.prize_type
@@ -406,11 +515,11 @@ async function getRouletteHistory() {
     .from('roulette_spins')
     .select('*, operators(name, registration)')
     .order('created_at', { ascending: false })
-    .limit(50);
+    .limit(100);
 
   if (error) {
     // Fallback if join syntax fails
-    const { data: rawSpins } = await supabase.from('roulette_spins').select('*').order('created_at', { ascending: false }).limit(50);
+    const { data: rawSpins } = await supabase.from('roulette_spins').select('*').order('created_at', { ascending: false }).limit(100);
     const { data: ops } = await supabase.from('operators').select('id, name, registration');
     const opMap = {};
     (ops || []).forEach(o => { opMap[o.id] = o; });
@@ -427,6 +536,93 @@ async function getRouletteHistory() {
     operator_name: s.operators ? s.operators.name : 'Operador',
     registration: s.operators ? s.operators.registration : '-'
   }));
+}
+
+async function deleteRouletteSpin(spinId, username = 'Admin') {
+  // 1. Fetch spin
+  const { data: spins, error: fetchErr } = await supabase.from('roulette_spins').select('*').eq('id', spinId);
+  if (fetchErr || !spins || spins.length === 0) {
+    throw new Error('Giro não encontrado ou já excluído.');
+  }
+  const spin = spins[0];
+  const operatorId = spin.operator_id;
+
+  // 2. Revert double points if applicable
+  if (spin.prize_type === 'double_points') {
+    const { data: otherDoubleSpins } = await supabase
+      .from('roulette_spins')
+      .select('id')
+      .eq('operator_id', operatorId)
+      .eq('prize_type', 'double_points')
+      .neq('id', spinId);
+
+    if (!otherDoubleSpins || otherDoubleSpins.length === 0) {
+      await supabase.from('operator_double_points').delete().eq('operator_id', operatorId);
+    }
+  }
+
+  // 3. Revert point transactions & sync tickets
+  if (spin.prize_type === 'ticket' || spin.prize_type === 'duo_prize' || (spin.points && spin.points > 0)) {
+    await supabase
+      .from('point_transactions')
+      .delete()
+      .eq('operator_id', operatorId)
+      .or(`description.ilike.%Giro #${spinId}%,description.ilike.%${spin.prize}%`);
+
+    await syncOperatorTickets(operatorId, 1);
+  }
+
+  // 4. Revert prize from prizes table
+  if (['extra_break', 'early_leave', 'wildcard', 'extra_spin', 'duo_prize'].includes(spin.prize_type)) {
+    await supabase
+      .from('prizes')
+      .delete()
+      .eq('operator_id', operatorId)
+      .or(`observation.ilike.%Giro #${spinId}%,observation.ilike.%${spin.prize}%,name.ilike.%${spin.prize}%`);
+  }
+
+  // 5. Delete the spin record
+  await supabase.from('roulette_spins').delete().eq('id', spinId);
+
+  // 6. Audit log
+  await logAudit(username, 'DELETE_ROULETTE_SPIN', 'roulette_spins', String(spinId), spin, null);
+
+  return { success: true, message: `Giro de "${spin.prize}" excluído com sucesso e premiações revogadas.` };
+}
+
+async function resetAllRouletteHistory(username = 'Admin') {
+  // 1. Fetch all spins
+  const { data: allSpins } = await supabase.from('roulette_spins').select('*');
+  const operatorIds = [...new Set((allSpins || []).map(s => s.operator_id))];
+
+  // 2. Delete all spins
+  await supabase.from('roulette_spins').delete().neq('id', 0);
+
+  // 3. Clear all active double points
+  await supabase.from('operator_double_points').delete().neq('operator_id', 0);
+
+  // 4. Delete point transactions generated from roulette
+  await supabase.from('point_transactions').delete().ilike('description', '%Roleta 156%');
+
+  // 5. Delete prizes generated from roulette
+  await supabase.from('prizes').delete().ilike('observation', '%Roleta 156%');
+
+  // 6. Re-sync tickets for all affected operators
+  for (const opId of operatorIds) {
+    await syncOperatorTickets(opId, 1);
+  }
+
+  // 7. Audit log
+  await logAudit(username, 'RESET_ROULETTE_HISTORY', 'roulette_spins', null, null, {
+    totalDeletedSpins: (allSpins || []).length,
+    affectedOperators: operatorIds.length
+  });
+
+  return {
+    success: true,
+    message: 'Histórico da roleta e todas as premiações ativas foram completamente zerados.',
+    deletedCount: (allSpins || []).length
+  };
 }
 
 // ==========================================
@@ -741,6 +937,8 @@ module.exports = {
   ROULETTE_PRIZES,
   spinRoulette,
   getRouletteHistory,
+  deleteRouletteSpin,
+  resetAllRouletteHistory,
   getCampaign,
   updateCampaign,
   lockCampaign,
