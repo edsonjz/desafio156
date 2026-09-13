@@ -1,0 +1,60 @@
+name: Supabase Keep-Alive
+
+# ==============================================================================
+# WORKFLOW: Supabase Keep-Alive (Desafio 156)
+# ==============================================================================
+# Finalidade:
+# Executar uma operação periódica mínima na tabela técnica 'system_heartbeat'
+# do Supabase para evitar que o projeto entre em pausa por inatividade
+# no plano gratuito (regra dos 7 dias sem atividade).
+#
+# Segurança:
+# - Utiliza GitHub Secrets para SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY.
+# - Nenhuma credencial é gravada no código.
+# - Os logs omitem chaves, tokens e dados sensíveis.
+# ==============================================================================
+
+on:
+  # Agendamento periódico: uma vez a cada dois dias às 12:00 UTC
+  schedule:
+    - cron: '0 12 */2 * *'
+
+  # Permite disparo manual via interface do GitHub (Actions > Run workflow)
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Motivo da execução manual (ex: teste inicial)'
+        required: false
+        default: 'Teste manual de keep-alive'
+
+# Evita execuções simultâneas concorrentes
+concurrency:
+  group: supabase-keepalive
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    name: Supabase Ping
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar Dependências Necessárias
+        run: |
+          npm install @supabase/supabase-js dotenv --no-audit --no-fund
+
+      - name: Executar Heartbeat no Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          HEARTBEAT_SOURCE: 'github-actions'
+        run: |
+          node backend/scripts/supabase-keepalive.js

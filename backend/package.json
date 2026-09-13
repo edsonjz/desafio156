@@ -5,6 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "keepalive": "node scripts/supabase-keepalive.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
