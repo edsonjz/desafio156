@@ -29,8 +29,14 @@ const CONFIG = {
   enabled: process.env.KEEPALIVE_ENABLED !== 'false',
 
   // URL e Chave do Supabase (prioriza service_role para contornar RLS de forma segura)
-  supabaseUrl: process.env.SUPABASE_URL || 'https://uctujsmnhmpysacqkuif.supabase.co',
-  supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY,
+  supabaseUrl: (process.env.SUPABASE_URL || 'https://uctujsmnhmpysacqkuif.supabase.co').trim(),
+  supabaseKey: (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE ||
+    process.env.SUPABASE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    ''
+  ).trim(),
 
   // Identificador da fonte executora
   source: process.env.HEARTBEAT_SOURCE || 'github-actions',
@@ -77,6 +83,11 @@ async function runKeepAlive() {
     console.log(`KEEP-ALIVE DISABLED — ${timestamp}`);
     process.exit(0);
   }
+
+  // Diagnóstico seguro (não exibe o conteúdo de chaves)
+  console.log(`[Keep-Alive Config Check]`);
+  console.log(`- Supabase URL: ${CONFIG.supabaseUrl ? 'Configurada' : 'Ausente'}`);
+  console.log(`- Supabase Key: ${CONFIG.supabaseKey ? `Presente (${CONFIG.supabaseKey.length} caracteres)` : 'Ausente ou Vazia'}`);
 
   // Validação de credenciais mínimas
   if (!CONFIG.supabaseUrl || !CONFIG.supabaseKey) {
